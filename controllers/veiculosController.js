@@ -49,7 +49,7 @@ exports.criarVeiculo = async (req, res) => {
     manutencao_proxima_data,
     valor_diaria
   } = req.body;
-  const status = req.body.status || 'disponível';
+  const status = req.body.status || 'disponivel';
   if (!allowedStatuses.includes(status)) {
     return res.status(400).json({ error: 'Status inválido' });
   }
@@ -90,7 +90,7 @@ exports.criarVeiculo = async (req, res) => {
         numero_seguro,
         status,
         manutencao_proxima_data,
-        valor_diariaNumber,
+        valorDiariaNumber,
         foto_principal_url,
         fotos_urls
       ]
@@ -129,7 +129,7 @@ exports.editarVeiculo = async (req, res) => {
     manutencao_proxima_data,
     valor_diaria
   } = req.body;
-  const status = req.body.status || 'disponível';
+  const status = req.body.status || 'disponivel';
   if (!allowedStatuses.includes(status)) {
     return res.status(400).json({ error: 'Status inválido' });
   }
