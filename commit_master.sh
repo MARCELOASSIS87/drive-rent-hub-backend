@@ -6,7 +6,7 @@
 set -e
 
 # 1. Pede ao usuário para inserir uma mensagem de commit.
-echo "🔵 Por favor, digite a mensagem do seu commit e pressione [ENTER]:"
+echo "🔵 Por favor, digite a mensagem do seu commit do backend e pressione [ENTER]:"
 read COMMIT_MESSAGE
 
 # 2. Verifica se a mensagem de commit não está vazia.

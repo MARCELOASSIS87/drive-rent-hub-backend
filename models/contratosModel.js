@@ -51,5 +51,26 @@ module.exports = {
   async buscarPorId(id) {
     const [rows] = await pool.query('SELECT * FROM contratos WHERE id = ?', [id]);
     return rows[0];
-  }
+  },
+
+  /**
+   * Marca um contrato como assinado.
+   * @param {number} id Identificador do contrato.
+   * @param {string} ip IP de onde foi realizado o aceite.
+   */
+  async assinarContrato(id, ip) {
+    const assinatura_data = new Date();
+    await pool.query(
+      'UPDATE contratos SET status = ?, assinatura_data = ?, assinatura_ip = ? WHERE id = ?',
+      ['assinado', assinatura_data, ip, id]
+    );
+  },
+  /**
+  * Retorna todos os contratos cadastrados.
+  * @returns {Promise<object[]>}
+  */
+  async listarContratos() {
+    const [rows] = await pool.query('SELECT * FROM contratos');
+    return rows;
+  },
 };
