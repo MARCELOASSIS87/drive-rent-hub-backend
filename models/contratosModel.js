@@ -69,8 +69,26 @@ module.exports = {
   * Retorna todos os contratos cadastrados.
   * @returns {Promise<object[]>}
   */
+  /**
+   * Retorna todos os contratos com dados de período, motorista e veículo.
+   */
   async listarContratos() {
-    const [rows] = await pool.query('SELECT * FROM contratos');
+    const [rows] = await pool.query(`
+      SELECT
+        c.id,
+        c.status,
+        c.arquivo_html,
+        c.assinatura_data,
+        r.data_inicio,
+        r.data_fim,
+        m.nome AS motorista_nome,
+        v.marca AS veiculo_marca,
+        v.modelo AS veiculo_modelo
+      FROM contratos AS c
+      JOIN solicitacoes_aluguel AS r ON c.aluguel_id = r.id
+      JOIN motoristas        AS m ON c.motorista_id = m.id
+      JOIN veiculos          AS v ON c.veiculo_id   = v.id
+    `);
     return rows;
   },
 };

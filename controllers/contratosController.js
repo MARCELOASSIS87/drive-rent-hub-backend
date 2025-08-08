@@ -1,11 +1,11 @@
 const pool = require('../config/db');
 const contratosModel = require('../models/contratosModel');
 const generateContractHtml = require('../utils/contractHtml');
-
+const pdf = require('html-pdf');
 
 // Dados fixos do locador (podem vir de variáveis de ambiente ou configuração)
 const LOCADOR_INFO = {
-  nome: process.env.LOCADOR_NOME || 'Nome do Locador',
+  nome: process.env.LOCADOR_NOME || 'LocaPocos',
   nacionalidade: process.env.LOCADOR_NACIONALIDADE || '',
   estado_civil: process.env.LOCADOR_ESTADO_CIVIL || '',
   profissao: process.env.LOCADOR_PROFISSAO || '',
@@ -92,7 +92,24 @@ exports.visualizarContrato = async (req, res) => {
     res.status(500).json({ error: 'Erro ao buscar contrato', detalhes: err.message });
   }
 };
-
+// GET /contratos/:id/pdf
+exports.baixarContratoPdf = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const contrato = await contratosModel.buscarPorId(id);
+    if (!contrato) {
+      return res.status(404).json({ error: 'Contrato não encontrado' });
+    }
+    // Converte HTML em PDF
+    pdf.create(contrato.arquivo_html, { format: 'A4' }).toBuffer((err, buffer) => {
+      if (err) return res.status(500).json({ error: 'Erro ao gerar PDF' });
+      res.type('application/pdf');
+      res.send(buffer);
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Erro ao baixar PDF', detalhes: err.message });
+  }
+};
 // POST /contratos/:id/assinar
 exports.assinarContrato = async (req, res) => {
   try {

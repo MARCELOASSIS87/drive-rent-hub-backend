@@ -1,4 +1,24 @@
 const pool = require('../config/db');
+const rentalRequestsModel = require('../models/rentalRequestsModel');
+const contratosModel = require('../models/contratosModel');
+const generateContractHtml = require('../utils/contractHtml');
+
+const LOCADOR_INFO = {
+  nome: process.env.LOCADOR_NOME || 'LocaPocos',
+  nacionalidade: process.env.LOCADOR_NACIONALIDADE || '',
+  estado_civil: process.env.LOCADOR_ESTADO_CIVIL || '',
+  profissao: process.env.LOCADOR_PROFISSAO || '',
+  cpf: process.env.LOCADOR_CPF || '',
+  rg: process.env.LOCADOR_RG || '',
+  endereco: process.env.LOCADOR_ENDERECO || ''
+};
+const PAGAMENTO_INFO = {
+  banco: process.env.LOCADOR_BANCO || '[Banco]',
+  agencia: process.env.LOCADOR_AGENCIA || '[Agência]',
+  conta: process.env.LOCADOR_CONTA || '[Conta]',
+  chave_pix: process.env.LOCADOR_CHAVE_PIX || '[Chave Pix]'
+};
+
 
 exports.criarSolicitacao = async (req, res) => {
   const { veiculo_id, data_inicio, data_fim } = req.body;
@@ -90,12 +110,70 @@ exports.atualizarStatus = async (req, res) => {
   }
 
   try {
+    // 1) Atualiza o status da solicitação
     await pool.query(
       'UPDATE solicitacoes_aluguel SET status = ?, motivo_recusa = ? WHERE id = ?',
       [status, motivo || null, id]
     );
-    res.json({ message: 'Status atualizado com sucesso' });
+
+    // 2) Se for aprovado, gera automaticamente um contrato completo
+    if (status === 'aprovado') {
+      // Busca a solicitação aprovada
+      const sol = await rentalRequestsModel.buscarPorId(id);
+
+      // Busca dados do motorista
+      const [motoristaRows] = await pool.query(
+        `SELECT nome, cpf, email 
+       FROM motoristas 
+      WHERE id = ?`,
+        [sol.motorista_id]
+      );
+      const motorista = motoristaRows[0];
+
+      // Busca dados do veículo
+      const [veiculoRows] = await pool.query(
+        `SELECT marca, modelo, placa 
+         FROM veiculos 
+         WHERE id = ?`,
+        [sol.veiculo_id]
+      );
+      const veiculo = veiculoRows[0];
+
+      // Prepara o objeto de aluguel (usando a própria solicitação)
+      const aluguel = {
+        id: sol.id,
+        data_inicio: sol.data_inicio,
+        data_fim: sol.data_fim,
+        valor_total: sol.valor_total,
+        local_retirada: sol.endereco_retirada,
+        local_devolucao: sol.endereco_devolucao
+      };
+
+      // Gera o HTML definitivo do contrato
+      const contratoHtml = generateContractHtml({
+        locador: LOCADOR_INFO,
+        motorista,
+        veiculo,
+        aluguel,
+        pagamento: PAGAMENTO_INFO
+      });
+
+      // Persiste o contrato no banco com status inicial
+      await contratosModel.criarContrato({
+        aluguel_id: sol.id,
+        motorista_id: sol.motorista_id,
+        veiculo_id: sol.veiculo_id,
+        status: 'aguardando_assinatura',
+        arquivo_html: contratoHtml
+      });
+    }
+
+
+    return res.json({ message: 'Status atualizado e contrato gerado (se aprovado).' });
   } catch (err) {
-    res.status(500).json({ error: 'Erro ao atualizar status', detalhes: err.message });
+    console.error('Erro em atualizarStatus:', err);
+    return res
+      .status(500)
+      .json({ error: 'Erro ao atualizar status', detalhes: err.message });
   }
 };

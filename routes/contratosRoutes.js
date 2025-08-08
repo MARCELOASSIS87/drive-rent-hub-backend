@@ -8,6 +8,6 @@ router.get('/:id', auth, contratosController.visualizarContrato);
 router.post('/:id/assinar', auth, contratosController.assinarContrato);
 // Listar todos os contratos
 router.get('/', auth, contratosController.listarContratos);
-
+router.get('/:id/pdf', auth, contratosController.baixarContratoPdf);
 
 module.exports = router;
