@@ -14,13 +14,19 @@ module.exports = {
     data_fim,
     endereco_retirada,
     endereco_devolucao,
-    pagamentoDinheiro
+    pagamentoDinheiro,
+    nacionalidade,
+    estado_civil,
+    profissao,
+    rg,
+    endereco
   }) {
     const [result] = await pool.query(
       `INSERT INTO solicitacoes_aluguel
         (motorista_id, veiculo_id, data_inicio, data_fim,
-         endereco_retirada, endereco_devolucao, pagamento_dinheiro, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         endereco_retirada, endereco_devolucao, pagamento_dinheiro, status,
+         nacionalidade, estado_civil, profissao, rg, endereco)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         motorista_id,
         veiculo_id,
@@ -29,7 +35,12 @@ module.exports = {
         endereco_retirada,
         endereco_devolucao,
         pagamentoDinheiro ? 1 : 0,
-        'pendente'
+        'pendente',
+        nacionalidade,
+        estado_civil,
+        profissao,
+        rg,
+        endereco
       ]
     );
     return this.buscarPorId(result.insertId);
@@ -42,11 +53,12 @@ module.exports = {
    */
   async buscarPorId(id) {
     const [rows] = await pool.query(
-      'SELECT * FROM solicitacoes_aluguel WHERE id = ?',
+      `SELECT * FROM solicitacoes_aluguel WHERE id = ?`,
       [id]
     );
     return rows[0];
   },
+
 
   /**
    * Atualiza o status (e opcionalmente o motivo de recusa) de uma solicitação.

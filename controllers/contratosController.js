@@ -13,63 +13,84 @@ const LOCADOR_INFO = {
   rg: process.env.LOCADOR_RG || '',
   endereco: process.env.LOCADOR_ENDERECO || ''
 };
-const PAGAMENTO_INFO = {
-  banco: process.env.LOCADOR_BANCO || '[Banco]',
-  agencia: process.env.LOCADOR_AGENCIA || '[Agência]',
-  conta: process.env.LOCADOR_CONTA || '[Conta]',
-  chave_pix: process.env.LOCADOR_CHAVE_PIX || '[Chave Pix]'
-};
-
 exports.gerarContrato = async (req, res) => {
-  const { aluguel_id, motorista_id, veiculo_id } = req.body;
+  const { aluguel_id, banco, agencia, conta, chave_pix } = req.body;
 
-  if (!aluguel_id || !motorista_id || !veiculo_id) {
+  if (!aluguel_id || !banco || !agencia || !conta || !chave_pix) {
     return res.status(400).json({
-      error: 'aluguel_id, motorista_id e veiculo_id são obrigatórios'
+      error: 'aluguel_id, banco, agencia, conta e chave_pix são obrigatórios'
     });
   }
 
   try {
-    const [rowsAluguel] = await pool.query(
-      'SELECT * FROM alugueis WHERE id = ?',
+    const [rows] = await pool.query(
+      `SELECT s.*, m.nome, m.cpf, v.marca, v.modelo, v.placa, v.renavam, v.ano
+         FROM solicitacoes_aluguel s
+         JOIN motoristas m ON s.motorista_id = m.id
+         JOIN veiculos v   ON s.veiculo_id   = v.id
+        WHERE s.id = ?`,
       [aluguel_id]
     );
-    const [rowsMotorista] = await pool.query(
-      `SELECT nome, cpf, nacionalidade, estado_civil, profissao, rg, endereco
-       FROM motoristas WHERE id = ?`, [motorista_id]
-    );
-    const [rowsVeiculo] = await pool.query(
-      'SELECT marca, modelo, placa, renavam, ano FROM veiculos WHERE id = ?',
-      [veiculo_id]
-    );
 
-    const aluguel = rowsAluguel[0];
-    const motorista = rowsMotorista[0];
-    const veiculo = rowsVeiculo[0];
-
-    if (!aluguel || !motorista || !veiculo) {
+    const sol = rows[0];
+    if (!sol) {
       return res.status(404).json({ error: 'Dados não encontrados' });
     }
+
+    const motorista = {
+      nome: sol.nome,
+      cpf: sol.cpf,
+      nacionalidade: sol.nacionalidade,
+      estado_civil: sol.estado_civil,
+      profissao: sol.profissao,
+      rg: sol.rg,
+      endereco: sol.endereco
+    };
+
+    const veiculo = {
+      marca: sol.marca,
+      modelo: sol.modelo,
+      placa: sol.placa,
+      renavam: sol.renavam,
+      ano: sol.ano
+    };
+
+    const aluguel = {
+      id: sol.id,
+      data_inicio: sol.data_inicio,
+      data_fim: sol.data_fim,
+      valor_total: sol.valor_total,
+      local_retirada: sol.endereco_retirada,
+      local_devolucao: sol.endereco_devolucao
+    };
+
+    const pagamento = { banco, agencia, conta, chave_pix };
 
     const contratoHtml = generateContractHtml({
       locador: LOCADOR_INFO,
       motorista,
       veiculo,
       aluguel,
-      pagamento: PAGAMENTO_INFO
+      pagamento
     });
 
     const contratoId = await contratosModel.criarContrato({
-      aluguel_id,
-      motorista_id,
-      veiculo_id,
+      aluguel_id: sol.id,
+      motorista_id: sol.motorista_id,
+      veiculo_id: sol.veiculo_id,
       arquivo_html: contratoHtml,
-      status: 'aguardando_assinatura'
+      status: 'aguardando_assinatura',
+      banco,
+      agencia,
+      conta,
+      chave_pix
     });
 
     res.status(201).json({ id: contratoId });
   } catch (err) {
-    res.status(500).json({ error: 'Erro ao gerar contrato', detalhes: err.message });
+    res
+      .status(500)
+      .json({ error: 'Erro ao gerar contrato', detalhes: err.message });
   }
 };
 

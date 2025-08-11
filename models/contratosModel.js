@@ -23,13 +23,18 @@ module.exports = {
     status = 'aguardando_assinatura',
     arquivo_html,
     assinatura_data,
-    assinatura_ip
+    assinatura_ip,
+    banco,
+    agencia,
+    conta,
+    chave_pix
   }) {
     const [result] = await pool.query(
       `INSERT INTO contratos (
          aluguel_id, motorista_id, veiculo_id,
-         status, arquivo_html, assinatura_data, assinatura_ip
-       ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         status, arquivo_html, assinatura_data, assinatura_ip,
+         banco, agencia, conta, chave_pix
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         aluguel_id,
         motorista_id,
@@ -37,11 +42,16 @@ module.exports = {
         status,
         arquivo_html,
         assinatura_data,
-        assinatura_ip
+        assinatura_ip,
+        banco,
+        agencia,
+        conta,
+        chave_pix
       ]
     );
     return result.insertId;
   },
+
 
   /**
    * Busca um contrato pelo ID.

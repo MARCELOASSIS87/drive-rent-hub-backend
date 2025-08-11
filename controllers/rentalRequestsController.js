@@ -21,7 +21,22 @@ const PAGAMENTO_INFO = {
 
 
 exports.criarSolicitacao = async (req, res) => {
-  const { veiculo_id, data_inicio, data_fim } = req.body;
+  console.log('=== criarSolicitacao chamado ===');
+  console.log('Usuario logado:', req.user);
+  console.log('Body recebido em criarSolicitacao:', req.body);
+  const {
+    veiculo_id,
+    data_inicio,
+    data_fim,
+    endereco_retirada,
+    endereco_devolucao,
+    pagamentoDinheiro,
+    nacionalidade,
+    estado_civil,
+    profissao,
+    rg,
+    endereco
+  } = req.body;
   const motorista_id = req.user?.id;
 
   if (!motorista_id) {
@@ -29,14 +44,27 @@ exports.criarSolicitacao = async (req, res) => {
   }
 
   try {
-    const [result] = await pool.query(
-      `INSERT INTO solicitacoes_aluguel (motorista_id, veiculo_id, data_inicio, data_fim, status)
-       VALUES (?, ?, ?, ?, 'pendente')`,
-      [motorista_id, veiculo_id, data_inicio, data_fim]
-    );
-    res.status(201).json({ id: result.insertId });
+    const solicitacao = await rentalRequestsModel.criarSolicitacao({
+      motorista_id,
+      veiculo_id,
+      data_inicio,
+      data_fim,
+      endereco_retirada,
+      endereco_devolucao,
+      pagamentoDinheiro,
+      nacionalidade,
+      estado_civil,
+      profissao,
+      rg,
+      endereco
+    });
+    console.log('Solicitação criada corretamente:', solicitacao);
+    res.status(201).json(solicitacao);
   } catch (err) {
-    res.status(500).json({ error: 'Erro ao criar solicitação', detalhes: err.message });
+    console.error('Erro ao criar solicitação:', err);
+    res
+      .status(500)
+      .json({ error: 'Erro ao criar solicitação', detalhes: err.message });
   }
 };
 
@@ -164,7 +192,8 @@ exports.atualizarStatus = async (req, res) => {
         motorista_id: sol.motorista_id,
         veiculo_id: sol.veiculo_id,
         status: 'aguardando_assinatura',
-        arquivo_html: contratoHtml
+        arquivo_html: contratoHtml,
+        ...PAGAMENTO_INFO
       });
     }
 
