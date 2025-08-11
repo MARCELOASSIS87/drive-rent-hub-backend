@@ -18,6 +18,10 @@ module.exports = function generateContractHtml({ locador, motorista, veiculo, al
     <h2>CLÁUSULA 4ª – DO PRAZO</h2>
     <p>O presente contrato terá duração de ${Math.ceil((new Date(aluguel.data_fim) - new Date(aluguel.data_inicio))/(1000*60*60*24))} dias, com início em ${new Date(aluguel.data_inicio).toLocaleDateString('pt-BR')} e término em ${new Date(aluguel.data_fim).toLocaleDateString('pt-BR')}, podendo ser renovado mediante acordo escrito.</p>
 
+    <h2>RETIRADA E DEVOLUÇÃO</h2>
+    <p>Retirada: ${aluguel.local_retirada || '[definir]'}</p>
+    <p>Devolução: ${aluguel.local_devolucao || '[definir]'}</p>
+
     <h2>CLÁUSULA 5ª – DA PRORROGAÇÃO OU ATRASO</h2>
     <p>Caso o LOCATÁRIO não devolva na data estipulada, continuará responsável pelo pagamento proporcional do aluguel e por eventuais danos.</p>
 

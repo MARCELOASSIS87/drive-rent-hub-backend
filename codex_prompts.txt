@@ -1,0 +1,95 @@
+PROMPT — BACKEND FIX PACK (contratos + endereços + rotas)
+
+Contexto
+Repo: drive-rent-hub-backend
+Objetivo: corrigir /contratos/gerar (404/500), permitir receber e persistir endereco_retirada/devolucao na solicitacao antes de gerar o contrato, e manter compat com tudo existente. Não remover nada que já funciona.
+
+0) Rotas montadas em /contratos e /admin/contratos
+- No arquivo onde a app monta as rotas (ex.: app.js/server.js), além do que já existe, garanta:
+  const contratosRoutes = require('./routes/contratosRoutes');
+  app.use('/contratos', contratosRoutes);         // novo caminho
+  app.use('/admin/contratos', contratosRoutes);   // manter compat
+- Não remova outros app.use já existentes.
+
+1) controllers/contratosController.js → exports.gerarContrato
+- Ajustar para receber do req.body:
+  aluguel_id (obrigatório),
+  banco, agencia, conta, chave_pix (obrigatórios),
+  endereco_retirada, endereco_devolucao (opcionais).
+- Passos (em ordem), mantendo o que já existe:
+  1. Validação: se faltar aluguel_id ou algum dado de pagamento, retornar 400 com JSON.
+  2. Carregar a solicitação por aluguel_id (JOIN com motorista e veículo como hoje).
+  3. Se endereco_retirada ou endereco_devolucao vierem, executar:
+     UPDATE solicitacoes_aluguel
+        SET endereco_retirada = COALESCE(?, endereco_retirada),
+            endereco_devolucao = COALESCE(?, endereco_devolucao)
+      WHERE id = ?
+     (use pool.query com [retirada || null, devolucao || null, aluguel_id])
+  4. Recarregar a solicitação (ou reusar os valores enviados).
+  5. Montar o objeto aluguel incluindo:
+     {
+       id: s.id,
+       data_inicio: s.data_inicio,
+       data_fim: s.data_fim,
+       valor_total: s.valor_total,
+       local_retirada: s.endereco_retirada,
+       local_devolucao: s.endereco_devolucao
+     }
+  6. Gerar HTML com generateContractHtml({ locador, motorista, veiculo, aluguel, pagamento })
+     onde pagamento = { banco, agencia, conta, chave_pix }.
+  7. Criar contrato via contratosModel.criarContrato usando apenas colunas existentes em 'contratos':
+     aluguel_id, motorista_id, veiculo_id, status, arquivo_html, assinatura_data, assinatura_ip
+     (status inicial: 'aguardando_assinatura').
+  8. Retornar 201 com { id: <novo_contrato_id> }.
+- try/catch com console.error('Erro em gerarContrato:', err) e 500 { error, detalhes: err.message }.
+
+2) models/contratosModel.js → criarContrato, buscarPorId, listarContratos
+- criarContrato(data): garantir INSERT somente com colunas existentes:
+  INSERT INTO contratos (
+    aluguel_id, motorista_id, veiculo_id, status, arquivo_html, assinatura_data, assinatura_ip
+  ) VALUES (?, ?, ?, ?, ?, NULL, NULL)
+- buscarPorId(id): manter retornando arquivo_html e status.
+- listarContratos(): manter JOIN com solicitacoes_aluguel, motoristas, veiculos, retornando:
+  c.id, c.status, c.assinatura_data, c.arquivo_html,
+  r.data_inicio, r.data_fim, r.endereco_retirada, r.endereco_devolucao,
+  m.nome AS motorista_nome,
+  v.marca AS veiculo_marca, v.modelo AS veiculo_modelo.
+
+3) utils/contractHtml.js
+- Sem remover cláusulas existentes, acrescentar a seção:
+  <h2>RETIRADA E DEVOLUÇÃO</h2>
+  <p>Retirada: ${aluguel.local_retirada || '[definir]'}</p>
+  <p>Devolução: ${aluguel.local_devolucao || '[definir]'}</p>
+- Datas em pt-BR (toLocaleDateString('pt-BR')) podem ser mantidas se já houver.
+
+4) controllers/rentalRequestsController.js
+- Não remover a geração automática de contrato ao aprovar (defaults de pagamento mantidos).
+- Nada aqui deve depender dos novos endereços (eles virão no gerar manual do admin).
+
+5) routes/contratosRoutes.js
+- Confirmar que existem:
+  POST /gerar  → contratosController.gerarContrato
+  GET  /:id    → contratosController.visualizarContrato
+  POST /:id/assinar
+  GET  /:id/pdf
+  GET  /       → listar contratos (se já existir)
+- Middleware de auth como está, sem remoções.
+
+6) Testes manuais rápidos
+- POST /contratos/gerar (body):
+  {
+    "aluguel_id": 11,
+    "banco": "itau",
+    "agencia": "0145",
+    "conta": "123456",
+    "chave_pix": "35992181400",
+    "endereco_retirada": "Doc",
+    "endereco_devolucao": "Paraibuna"
+  }
+  → 201 e contrato criado; solicitacoes_aluguel atualizada com os endereços.
+- Admin > Contratos: preview exibe 'RETIRADA/DEVOLUÇÃO'.
+- PDF continua baixando.
+- Se /contratos/gerar responder 404, verificar montagem das rotas em /contratos (além de /admin/contratos).
+
+Commit message sugerida:
+fix(backend): mount /contratos; update pickup/return on gerar; safe INSERT in contratos; add pickup/return to HTML

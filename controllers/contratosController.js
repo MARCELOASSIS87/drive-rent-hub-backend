@@ -14,11 +14,19 @@ const LOCADOR_INFO = {
   endereco: process.env.LOCADOR_ENDERECO || ''
 };
 exports.gerarContrato = async (req, res) => {
-  const { aluguel_id, banco, agencia, conta, chave_pix } = req.body;
+  const {
+    aluguel_id,
+    banco,
+    agencia,
+    conta,
+    chave_pix,
+    endereco_retirada,
+    endereco_devolucao,
+  } = req.body;
 
   if (!aluguel_id || !banco || !agencia || !conta || !chave_pix) {
     return res.status(400).json({
-      error: 'aluguel_id, banco, agencia, conta e chave_pix são obrigatórios'
+      error: 'aluguel_id, banco, agencia, conta e chave_pix são obrigatórios',
     });
   }
 
@@ -32,11 +40,29 @@ exports.gerarContrato = async (req, res) => {
       [aluguel_id]
     );
 
-    const sol = rows[0];
+    let sol = rows[0];
     if (!sol) {
       return res.status(404).json({ error: 'Dados não encontrados' });
     }
+    if (endereco_retirada || endereco_devolucao) {
+      await pool.query(
+        `UPDATE solicitacoes_aluguel
+           SET endereco_retirada = COALESCE(?, endereco_retirada),
+               endereco_devolucao = COALESCE(?, endereco_devolucao)
+         WHERE id = ?`,
+        [endereco_retirada || null, endereco_devolucao || null, aluguel_id]
+      );
 
+      const [atualizadas] = await pool.query(
+        `SELECT s.*, m.nome, m.cpf, v.marca, v.modelo, v.placa, v.renavam, v.ano
+           FROM solicitacoes_aluguel s
+           JOIN motoristas m ON s.motorista_id = m.id
+           JOIN veiculos v   ON s.veiculo_id   = v.id
+          WHERE s.id = ?`,
+        [aluguel_id]
+      );
+      sol = atualizadas[0];
+    }
     const motorista = {
       nome: sol.nome,
       cpf: sol.cpf,
@@ -71,7 +97,7 @@ exports.gerarContrato = async (req, res) => {
       motorista,
       veiculo,
       aluguel,
-      pagamento
+      pagamento,
     });
 
     const contratoId = await contratosModel.criarContrato({
@@ -80,14 +106,12 @@ exports.gerarContrato = async (req, res) => {
       veiculo_id: sol.veiculo_id,
       arquivo_html: contratoHtml,
       status: 'aguardando_assinatura',
-      banco,
-      agencia,
-      conta,
-      chave_pix
+      arquivo_html: contratoHtml,
     });
 
     res.status(201).json({ id: contratoId });
   } catch (err) {
+    console.error('Erro em gerarContrato:', err);
     res
       .status(500)
       .json({ error: 'Erro ao gerar contrato', detalhes: err.message });

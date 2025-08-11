@@ -22,32 +22,13 @@ module.exports = {
     veiculo_id,
     status = 'aguardando_assinatura',
     arquivo_html,
-    assinatura_data,
-    assinatura_ip,
-    banco,
-    agencia,
-    conta,
-    chave_pix
   }) {
     const [result] = await pool.query(
       `INSERT INTO contratos (
          aluguel_id, motorista_id, veiculo_id,
-         status, arquivo_html, assinatura_data, assinatura_ip,
-         banco, agencia, conta, chave_pix
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        aluguel_id,
-        motorista_id,
-        veiculo_id,
-        status,
-        arquivo_html,
-        assinatura_data,
-        assinatura_ip,
-        banco,
-        agencia,
-        conta,
-        chave_pix
-      ]
+         status, arquivo_html, assinatura_data, assinatura_ip
+       ) VALUES (?, ?, ?, ?, ?, NULL, NULL)`,
+      [aluguel_id, motorista_id, veiculo_id, status, arquivo_html]
     );
     return result.insertId;
   },
@@ -59,7 +40,10 @@ module.exports = {
    * @returns {Promise<object|undefined>} Registro encontrado ou undefined.
    */
   async buscarPorId(id) {
-    const [rows] = await pool.query('SELECT * FROM contratos WHERE id = ?', [id]);
+    const [rows] = await pool.query(
+      'SELECT * FROM contratos WHERE id = ?',
+      [id]
+    );
     return rows[0];
   },
 
@@ -91,6 +75,8 @@ module.exports = {
         c.assinatura_data,
         r.data_inicio,
         r.data_fim,
+        r.endereco_retirada,
+        r.endereco_devolucao,
         m.nome AS motorista_nome,
         v.marca AS veiculo_marca,
         v.modelo AS veiculo_modelo

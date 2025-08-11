@@ -21,7 +21,7 @@ app.use('/motoristas', motoristasRoutes);
 const rentalRequestsRoutes = require('./routes/rentalRequestsRoutes');
 app.use('/solicitacoes', rentalRequestsRoutes);
 const contratosRoutes = require('./routes/contratosRoutes');
-// monta o mesmo router em /admin/contratos
-app.use('/admin/contratos', contratosRoutes);
+app.use('/contratos', contratosRoutes); // novo caminho
+app.use('/admin/contratos', contratosRoutes); // manter compat
 // (no futuro: outras rotas)
 module.exports = app;
