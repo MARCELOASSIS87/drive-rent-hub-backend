@@ -31,16 +31,23 @@ const validarValorDiaria = (req, res, next) => {
 };
 // Rotas de CRUD de veículos
 router.get('/', veiculosController.listarVeiculos);
+router.get('/meus', auth, veiculosController.listarMeusVeiculos);
 router.get('/:id', veiculosController.obterVeiculo);
-router.post('/', upload.fields([
-  { name: 'foto_principal', maxCount: 1 },
-  { name: 'fotos', maxCount: 10 }
-]), validarValorDiaria, veiculosController.criarVeiculo);
-router.put('/:id/status', auth, veiculosController.atualizarStatus);
-router.put('/:id', upload.fields([
-  { name: 'foto_principal', maxCount: 1 },
-  { name: 'fotos', maxCount: 10 }
-]), validarValorDiaria, veiculosController.editarVeiculo);
-router.delete('/:id', veiculosController.excluirVeiculo);
+router.post(  '/',  auth,  upload.fields([
+    { name: 'foto_principal', maxCount: 1 },
+    { name: 'fotos', maxCount: 10 }
+  ]),
+  validarValorDiaria,
+  veiculosController.criarVeiculo
+);
+router.put(  '/:id/status',  auth,  veiculosController.atualizarStatus);
+router.put(  '/:id',  auth,  upload.fields([
+    { name: 'foto_principal', maxCount: 1 },
+    { name: 'fotos', maxCount: 10 }
+  ]),
+  validarValorDiaria,
+  veiculosController.editarVeiculo
+);
+router.delete('/:id', auth, veiculosController.excluirVeiculo);
 
 module.exports = router;

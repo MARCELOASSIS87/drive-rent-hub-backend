@@ -32,10 +32,17 @@ exports.gerarContrato = async (req, res) => {
 
   try {
     const [rows] = await pool.query(
-      `SELECT s.*, m.nome, m.cpf, v.marca, v.modelo, v.placa, v.renavam, v.ano
+      `SELECT s.*, m.nome, m.cpf,
+              v.marca, v.modelo, v.placa, v.renavam, v.ano,
+              v.proprietario_id,
+              p.nome      AS proprietario_nome,
+              p.cpf_cnpj  AS proprietario_documento,
+              p.email     AS proprietario_email,
+              p.telefone  AS proprietario_telefone
          FROM solicitacoes_aluguel s
          JOIN motoristas m ON s.motorista_id = m.id
          JOIN veiculos v   ON s.veiculo_id   = v.id
+         LEFT JOIN proprietarios p ON v.proprietario_id = p.id
         WHERE s.id = ?`,
       [aluguel_id]
     );
@@ -54,10 +61,17 @@ exports.gerarContrato = async (req, res) => {
       );
 
       const [atualizadas] = await pool.query(
-        `SELECT s.*, m.nome, m.cpf, v.marca, v.modelo, v.placa, v.renavam, v.ano
+        `SELECT s.*, m.nome, m.cpf,
+                v.marca, v.modelo, v.placa, v.renavam, v.ano,
+                v.proprietario_id,
+                p.nome     AS proprietario_nome,
+                p.cpf_cnpj AS proprietario_documento,
+                p.email    AS proprietario_email,
+                p.telefone AS proprietario_telefone
            FROM solicitacoes_aluguel s
            JOIN motoristas m ON s.motorista_id = m.id
            JOIN veiculos v   ON s.veiculo_id   = v.id
+           LEFT JOIN proprietarios p ON v.proprietario_id = p.id
           WHERE s.id = ?`,
         [aluguel_id]
       );
@@ -92,23 +106,37 @@ exports.gerarContrato = async (req, res) => {
 
     const pagamento = { banco, agencia, conta, chave_pix };
 
+    const locador = sol.proprietario_id
+      ? {
+        nome: sol.proprietario_nome,
+        nacionalidade: '',
+        estado_civil: '',
+        profissao: '',
+        cpf: sol.proprietario_documento,
+        rg: '',
+        endereco: ''
+      }
+      : LOCADOR_INFO;
+
     const contratoHtml = generateContractHtml({
-      locador: LOCADOR_INFO,
+      locador,
       motorista,
       veiculo,
       aluguel,
       pagamento,
     });
 
-    const contratoId = await contratosModel.criarContrato({
+    const contratoData = {
       aluguel_id: sol.id,
       motorista_id: sol.motorista_id,
       veiculo_id: sol.veiculo_id,
-      arquivo_html: contratoHtml,
       status: 'aguardando_assinatura',
       arquivo_html: contratoHtml,
-    });
-
+    };
+    if (sol.proprietario_id) {
+      contratoData.proprietario_id = sol.proprietario_id;
+    }
+    const contratoId = await contratosModel.criarContrato(contratoData);
     res.status(201).json({ id: contratoId });
   } catch (err) {
     console.error('Erro em gerarContrato:', err);

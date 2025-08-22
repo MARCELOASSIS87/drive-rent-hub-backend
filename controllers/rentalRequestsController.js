@@ -44,6 +44,11 @@ exports.criarSolicitacao = async (req, res) => {
   }
 
   try {
+    const [propRows] = await pool.query(
+      'SELECT proprietario_id FROM veiculos WHERE id = ?',
+      [veiculo_id]
+    );
+    const proprietarioId = propRows[0]?.proprietario_id || null;
     const solicitacao = await rentalRequestsModel.criarSolicitacao({
       motorista_id,
       veiculo_id,
@@ -59,7 +64,7 @@ exports.criarSolicitacao = async (req, res) => {
       endereco
     });
     console.log('Solicitação criada corretamente:', solicitacao);
-    res.status(201).json(solicitacao);
+    res.status(201).json({ ...solicitacao, proprietario_id: proprietarioId })
   } catch (err) {
     console.error('Erro ao criar solicitação:', err);
     res
@@ -76,17 +81,18 @@ exports.listarSolicitacoes = async (req, res) => {
   try {
     const [rows] = await pool.query(
       `SELECT s.*, 
-              m.nome    AS motorista_nome, 
+              m.nome    AS motorista_nome,
               m.email   AS motorista_email,
-              v.marca, v.modelo, v.placa
+              v.marca, v.modelo, v.placa, v.proprietario_id
          FROM solicitacoes_aluguel s
          JOIN motoristas m ON s.motorista_id = m.id
          JOIN veiculos   v ON s.veiculo_id   = v.id`
     );
 
     // Mapeia para aninhar veiculo e remover campos achatados
-    const formatted = rows.map(({ marca, modelo, placa, ...rest }) => ({
+    const formatted = rows.map(({ marca, modelo, placa, proprietario_id, ...rest }) => ({
       ...rest,
+      proprietario_id,
       motorista: {
         id: rest.motorista_id,
         nome: rest.motorista_nome,
@@ -108,7 +114,7 @@ exports.listarMinhasSolicitacoes = async (req, res) => {
   }
   try {
     const [rows] = await pool.query(
-      `SELECT s.*, v.marca, v.modelo, v.placa
+      `SELECT s.*, v.marca, v.modelo, v.placa, v.proprietario_id
          FROM solicitacoes_aluguel s
          JOIN veiculos v ON s.veiculo_id = v.id
         WHERE s.motorista_id = ?`,
@@ -117,6 +123,7 @@ exports.listarMinhasSolicitacoes = async (req, res) => {
     // Mantém marca/modelo/placa no root e adiciona veiculo aninhado
     const formatted = rows.map(r => ({
       ...r,
+      proprietario_id: r.proprietario_id,
       veiculo: { marca: r.marca, modelo: r.modelo, placa: r.placa }
     }));
     return res.json(formatted);
@@ -160,12 +167,40 @@ exports.atualizarStatus = async (req, res) => {
 
       // Busca dados do veículo
       const [veiculoRows] = await pool.query(
-        `SELECT marca, modelo, placa 
-         FROM veiculos 
+        `SELECT marca, modelo, placa, proprietario_id
+         FROM veiculos
          WHERE id = ?`,
         [sol.veiculo_id]
       );
-      const veiculo = veiculoRows[0];
+      const veiculoData = veiculoRows[0];
+      const veiculo = {
+        marca: veiculoData.marca,
+        modelo: veiculoData.modelo,
+        placa: veiculoData.placa
+      };
+
+      const proprietarioId = veiculoData?.proprietario_id || null;
+      let locador = LOCADOR_INFO;
+      if (proprietarioId) {
+        const [propRows] = await pool.query(
+          `SELECT id, nome, email, telefone, cpf_cnpj
+             FROM proprietarios
+            WHERE id = ?`,
+          [proprietarioId]
+        );
+        const proprietario = propRows[0];
+        if (proprietario) {
+          locador = {
+            nome: proprietario.nome,
+            nacionalidade: '',
+            estado_civil: '',
+            profissao: '',
+            cpf: proprietario.cpf_cnpj,
+            rg: '',
+            endereco: ''
+          };
+        }
+      }
 
       // Prepara o objeto de aluguel (usando a própria solicitação)
       const aluguel = {
@@ -179,23 +214,27 @@ exports.atualizarStatus = async (req, res) => {
 
       // Gera o HTML definitivo do contrato
       const contratoHtml = generateContractHtml({
-        locador: LOCADOR_INFO,
+        locador,
         motorista,
         veiculo,
         aluguel,
         pagamento: PAGAMENTO_INFO
       });
 
-      // Persiste o contrato no banco com status inicial
-      await contratosModel.criarContrato({
+      const contratoData = {
         aluguel_id: sol.id,
         motorista_id: sol.motorista_id,
         veiculo_id: sol.veiculo_id,
         status: 'aguardando_assinatura',
         arquivo_html: contratoHtml,
         ...PAGAMENTO_INFO
-      });
+      };
+      if (proprietarioId) {
+        contratoData.proprietario_id = proprietarioId;
+      }
+      await contratosModel.criarContrato(contratoData);
     }
+
 
 
     return res.json({ message: 'Status atualizado e contrato gerado (se aprovado).' });

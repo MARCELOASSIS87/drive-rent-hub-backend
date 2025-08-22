@@ -18,6 +18,8 @@ const veiculosRoutes = require('./routes/veiculosRoutes');
 app.use('/veiculos', veiculosRoutes);
 const motoristasRoutes = require('./routes/motoristasRoutes');
 app.use('/motoristas', motoristasRoutes);
+const proprietariosRoutes = require('./routes/proprietariosRoutes');
+app.use('/proprietarios', proprietariosRoutes);
 const rentalRequestsRoutes = require('./routes/rentalRequestsRoutes');
 app.use('/solicitacoes', rentalRequestsRoutes);
 const contratosRoutes = require('./routes/contratosRoutes');

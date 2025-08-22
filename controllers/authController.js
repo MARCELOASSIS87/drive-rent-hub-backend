@@ -32,43 +32,62 @@ exports.login = async (req, res) => {
       if (!senhaOk) return res.status(401).json({ error: 'Senha incorreta' });
 
       const token = jwt.sign(
-        { id: admin.id, nome: 'Admin', email: admin.email, role: admin.role },
+        { id: admin.id, nome: admin.nome, email: admin.email, role: admin.role },
         JWT_SECRET,
         { expiresIn: '1d' }
       );
 
-      return res.json({ token, nome: 'Admin', role: admin.role });
+      return res.json({ token, nome: admin.nome, role: admin.role });
     }
 
-    
-
-    // 2. Tenta como motorista
     const [motoristas] = await pool.query(
-    'SELECT * FROM motoristas WHERE email = ? LIMIT 1',
-    [email]
-  );
+      'SELECT * FROM motoristas WHERE email = ? LIMIT 1',
+      [email]
+    );
 
-  if (motoristas.length === 0) {
-    return res.status(404).json({ error: 'Usuário não encontrado' });
+    if (motoristas.length > 0) {
+      const motorista = motoristas[0];
+      const senhaOk = await bcrypt.compare(senhaEntrada, motorista.senha_hash);
+      if (!senhaOk) return res.status(401).json({ error: 'Senha incorreta' });
+
+      if (motorista.status !== 'aprovado') {
+        return res.status(403).json({ error: 'Cadastro ainda não aprovado' });
+      }
+
+      const token = jwt.sign(
+        { id: motorista.id, nome: motorista.nome, email: motorista.email, role: 'motorista' },
+        JWT_SECRET,
+        { expiresIn: '1d' }
+      );
+
+      return res.json({ token, nome: motorista.nome, role: 'motorista' });
+    }
+
+    const [proprietarios] = await pool.query(
+      'SELECT * FROM proprietarios WHERE email = ? LIMIT 1',
+      [email]
+    );
+
+    if (proprietarios.length === 0) {
+      return res.status(404).json({ error: 'Usuário não encontrado' });
+    }
+
+    const proprietario = proprietarios[0];
+    const senhaOk = await bcrypt.compare(senhaEntrada, proprietario.senha_hash);
+    if (!senhaOk) return res.status(401).json({ error: 'Senha incorreta' });
+
+    if (proprietario.status !== 'aprovado') {
+      return res.status(403).json({ error: 'Cadastro ainda não aprovado' });
+    }
+
+    const token = jwt.sign(
+      { id: proprietario.id, nome: proprietario.nome, email: proprietario.email, role: 'proprietario' },
+      JWT_SECRET,
+      { expiresIn: '1d' }
+    );
+
+    return res.json({ token, nome: proprietario.nome, role: 'proprietario' });
+  } catch (err) {
+    return res.status(500).json({ error: 'Erro ao fazer login', detalhes: err.message });
   }
-
-  const motorista = motoristas[0];
-  const senhaOk = await bcrypt.compare(senhaEntrada, motorista.senha_hash);
-  if (!senhaOk) return res.status(401).json({ error: 'Senha incorreta' });
-
-  if (motorista.status !== 'aprovado') {
-    return res.status(403).json({ error: 'Cadastro ainda não aprovado' });
-  }
-
-  const token = jwt.sign(
-    { id: motorista.id, nome: motorista.nome, email: motorista.email, role: 'motorista' },
-    JWT_SECRET,
-    { expiresIn: '1d' }
-  );
-
-  return res.json({ token, nome: motorista.nome, role: 'motorista' });
-
-} catch (err) {
-  return res.status(500).json({ error: 'Erro ao fazer login', detalhes: err.message });
-}
 };
