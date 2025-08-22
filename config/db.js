@@ -2,11 +2,11 @@ const mysql = require('mysql2/promise');
 const dotenv = require('dotenv');
 
 // 1º carrega .env sempre
-dotenv.config({ path: '.env' });
+dotenv.config({ path: '.env', quiet: process.env.NODE_ENV === 'test' });
 
 // 2º, se for testes, carrega .env.test por cima (override)
 if (process.env.NODE_ENV === 'test') {
-  dotenv.config({ path: '.env.test', override: true });
+  dotenv.config({ path: '.env.test', override: true, quiet: true });
 }
 
 // Seleciona o DB pelo ambiente

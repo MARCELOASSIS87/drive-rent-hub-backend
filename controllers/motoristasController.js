@@ -4,21 +4,22 @@ const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET
 
 exports.criarMotorista = async (req, res) => {
-  console.log('req.body:', req.body);
-  console.log('req.files:', req.files);
+  if (process.env.NODE_ENV !== 'test') console.log('req.body:', req.body);
+  if (process.env.NODE_ENV !== 'test') console.log('req.files:', req.files);
+  const { senha, password, cnh_categoria, nome, email } = req.body;
+  const senhaEntrada = senha || password;
+  if (!nome || !email || !cnh_categoria || cnh_categoria.length < 1 || cnh_categoria.length > 2 || !senhaEntrada) {
+    console.warn('Campos obrigatórios ausentes');
+    return res.status(400).json({ error: 'Campos obrigatórios ausentes' });
+  }
   const {
-    nome,
-    email,
     telefone,
     cpf,
     data_nascimento,
     cnh_numero,
     cnh_validade,
-    cnh_data_emissao,
-    cnh_categoria,
-    senha
+    cnh_data_emissao
   } = req.body;
-
   try {
     const foto_cnh_url = req.files?.foto_cnh ? `/uploads/motoristas/${req.files.foto_cnh[0].filename}` : null;
     const foto_perfil_url = req.files?.foto_perfil ? `/uploads/motoristas/${req.files.foto_perfil[0].filename}` : null;
@@ -26,7 +27,7 @@ exports.criarMotorista = async (req, res) => {
     const comprovante_endereco_url = req.files?.comprovante_endereco ? `/uploads/motoristas/${req.files.comprovante_endereco[0].filename}` : null;
     const documento_vinculo_url = req.files?.documento_vinculo ? `/uploads/motoristas/${req.files.documento_vinculo[0].filename}` : null;
     const antecedentes_criminais_url = req.files?.antecedentes_criminais ? `/uploads/motoristas/${req.files.antecedentes_criminais[0].filename}` : null;
-    const senhaCriptografada = await bcrypt.hash(senha, 10);
+    const senha_hash = await bcrypt.hash(senhaEntrada, 10);
 
     const [result] = await pool.query(
       `INSERT INTO motoristas (
@@ -48,7 +49,7 @@ exports.criarMotorista = async (req, res) => {
         cnh_validade,
         cnh_data_emissao,
         cnh_categoria,
-        senhaCriptografada,
+        senha_hash,
         foto_cnh_url,
         foto_perfil_url,
         selfie_cnh_url,
@@ -61,8 +62,12 @@ exports.criarMotorista = async (req, res) => {
 
     res.status(201).json({ id: result.insertId });
   } catch (err) {
+    if (err && err.code === 'ER_DUP_ENTRY') {
+      console.warn('DUPLICIDADE AO CADASTRAR MOTORISTA:', err.message);
+      return res.status(409).json({ error: 'Email ou CPF já cadastrado' });
+    }
     console.error('ERRO AO CADASTRAR MOTORISTA:', err.message);
-    res.status(500).json({ error: 'Erro ao cadastrar motorista', detalhes: err.message });
+    return res.status(500).json({ error: 'Erro ao cadastrar motorista', detalhes: err.message });
   }
 };
 exports.loginMotorista = async (req, res) => {

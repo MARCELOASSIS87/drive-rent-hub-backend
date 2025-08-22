@@ -1,5 +1,5 @@
 const pool = require('../config/db');
-const allowedStatuses = ['disponivel', 'em uso', 'manutencao'];
+const allowedStatuses = ['disponivel', 'alugado', 'manutencao', 'inativo'];
 
 // Listar todos os veículos (ativos)
 exports.listarVeiculos = async (req, res) => {
@@ -156,113 +156,163 @@ exports.criarVeiculo = async (req, res) => {
 
 // Atualizar veículo existente
 exports.editarVeiculo = async (req, res) => {
+  if (process.env.NODE_ENV !== 'test') {
+    console.log('CONTEÚDO DE REQ.BODY:', req.body);
+    console.log('CONTEÚDO DE REQ.FILES:', req.files);
+  }
+
   const { id } = req.params;
-  const {
-    marca,
-    modelo,
-    ano,
-    placa,
-    renavam,
-    cor,
-    numero_seguro,
-    manutencao_proxima_data,
-    valor_diaria
-  } = req.body;
-  const status = req.body.status || 'disponivel';
-  if (!allowedStatuses.includes(status)) {
-    return res.status(400).json({ error: 'Status inválido' });
+  const isAdmin = req.admin && ['comum', 'super'].includes(req.admin.role);
+
+  if (!req.user && !isAdmin) {
+    return res.status(401).json({ error: 'Não autenticado' });
   }
-  const valorDiariaNumber = parseFloat(valor_diaria);
-  if (isNaN(valorDiariaNumber) || valorDiariaNumber < 0) {
+  if (req.user && req.user.role !== 'proprietario') {
     return res
-      .status(400)
-      .json({ error: 'valor_diaria deve ser um número não negativo' });
+      .status(403)
+      .json({ error: 'Apenas proprietários podem editar veículos' });
   }
-  let foto_principal_url;
-  let fotos_urls;
+
+  try {
+    const [rows] = await pool.query(
+      'SELECT proprietario_id FROM veiculos WHERE id = ?',
+      [id]
+    );
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Veículo não encontrado' });
+    }
+    const proprietarioId = rows[0].proprietario_id;
+    if (!isAdmin) {
+      if (proprietarioId === null) {
+        return res.status(403).json({
+          error: 'Somente admin pode editar veículos sem proprietário'
+        });
+      }
+      if (proprietarioId !== req.user.id) {
+        return res
+          .status(403)
+          .json({ error: 'Você não é o proprietário deste veículo' });
+      }
+    }
+  } catch (err) {
+    return res
+      .status(500)
+      .json({ error: 'Erro ao editar veículo', detalhes: err.message });
+  }
+
+  const allowedFields = [
+    'modelo',
+    'marca',
+    'ano',
+    'placa',
+    'renavam',
+    'cor',
+    'numero_seguro',
+    'valor_diaria',
+    'status'
+  ];
+  const patch = {};
+  for (const field of allowedFields) {
+    if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+      patch[field] = req.body[field];
+    }
+  }
 
   if (req.files && req.files.foto_principal) {
-    foto_principal_url = `/uploads/veiculos/${req.files.foto_principal[0].filename}`;
+    patch.foto_principal_url = `/uploads/veiculos/${req.files.foto_principal[0].filename}`;
   }
   if (req.files && req.files.fotos) {
-    fotos_urls = req.files.fotos
+    patch.fotos_urls = req.files.fotos
       .map(f => `/uploads/veiculos/${f.filename}`)
       .join(',');
   }
 
-  if (!marca || !modelo || !ano) {
-    return res.status(400).json({ error: 'Marca, modelo e ano são obrigatórios.' });
+  if (patch.valor_diaria !== undefined) {
+    const valor = parseFloat(patch.valor_diaria);
+    if (isNaN(valor) || valor < 0) {
+      return res
+        .status(400)
+        .json({ error: 'valor_diaria deve ser um número não negativo' });
+    }
+    patch.valor_diaria = valor;
+  }
+
+  if (patch.ano !== undefined) {
+    const ano = parseInt(patch.ano, 10);
+    if (isNaN(ano) || ano < 1970 || ano > 2100) {
+      return res.status(400).json({ error: 'Ano inválido' });
+    }
+    patch.ano = ano;
+  }
+
+  if (patch.status !== undefined) {
+    if (!allowedStatuses.includes(patch.status)) {
+      return res.status(400).json({ error: 'Status inválido' });
+    }
+  }
+
+  if (patch.placa !== undefined) {
+    if (typeof patch.placa !== 'string' || patch.placa.trim() === '') {
+      return res.status(400).json({ error: 'Placa inválida' });
+    }
+    patch.placa = patch.placa.trim();
+  }
+
+  if (Object.keys(patch).length === 0) {
+    return res.status(400).json({ error: 'Nada para atualizar' });
+  }
+
+  const setClauses = [];
+  const values = [];
+  Object.keys(patch)
+    .sort()
+    .forEach(key => {
+      setClauses.push(`${key} = ?`);
+      values.push(patch[key]);
+    });
+
+  let query;
+  if (isAdmin) {
+    query = `UPDATE veiculos SET ${setClauses.join(', ')} WHERE id = ?`;
+    values.push(id);
+  } else {
+    query = `UPDATE veiculos SET ${setClauses.join(', ')} WHERE id = ? AND proprietario_id = ?`;
+    values.push(id, req.user.id);
   }
 
   try {
-    let query =
-      'UPDATE veiculos SET marca = ?, modelo = ?, ano = ?, placa = ?, renavam = ?, cor = ?, numero_seguro = ?, status = ?, manutencao_proxima_data = ?, valor_diaria = ?';
-    const params = [
-      marca,
-      modelo,
-      ano,
-      placa,
-      renavam,
-      cor,
-      numero_seguro,
-      status,
-      manutencao_proxima_data,
-      valorDiariaNumber
-    ];
-
-    if (foto_principal_url) {
-      query += ', foto_principal_url = ?';
-      params.push(foto_principal_url);
-    }
-    if (fotos_urls) {
-      query += ', fotos_urls = ?';
-      params.push(fotos_urls);
-    }
-    if (req.user.role === 'proprietario') {
-      const [rows] = await pool.query(
-        'SELECT proprietario_id FROM veiculos WHERE id = ?',
-        [id]
-      );
-      if (rows.length === 0) {
+    const [result] = await pool.query(query, values);
+    if (result.affectedRows === 0) {
+      if (isAdmin) {
         return res.status(404).json({ error: 'Veículo não encontrado' });
       }
-      const proprietarioId = rows[0].proprietario_id;
-      if (proprietarioId === null) {
-        return res.status(403).json({ error: 'Somente admin pode editar' });
-      }
-      if (proprietarioId !== req.user.id) {
-        return res.status(403).json({ error: 'Não autorizado' });
-      }
-      query += ' WHERE id = ? AND proprietario_id = ?';
-      params.push(id, req.user.id);
-    } else if (req.admin && ['comum', 'super'].includes(req.admin.role)) {
-      query += ' WHERE id = ?';
-      params.push(id);
-    } else {
-      return res.status(403).json({ error: 'Apenas proprietários ou admins' });
+      return res
+        .status(403)
+        .json({ error: 'Você não é o proprietário deste veículo' });
     }
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') {
+      return res.status(409).json({ error: 'Placa já cadastrada' });
+    }
+    return res
+      .status(500)
+      .json({ error: 'Erro ao editar veículo', detalhes: err.message });
+  }
 
-    const [result] = await pool.query(query, params);
-    if (result.affectedRows === 0) {
+  try {
+    const [rows] = await pool.query('SELECT * FROM veiculos WHERE id = ?', [id]);
+    if (rows.length === 0) {
       return res.status(404).json({ error: 'Veículo não encontrado' });
     }
-    res.json({
-      id,
-      marca,
-      modelo,
-      ano,
-      placa,
-      renavam,
-      cor,
-      numero_seguro,
-      status,
-      manutencao_proxima_data,
-      valor_diaria: valorDiariaNumber,
-      foto_principal_url,
-      fotos_urls
-    });
+    const veiculo = rows[0];
+    veiculo.valor_diaria = veiculo.valor_diaria
+      ? parseFloat(veiculo.valor_diaria)
+      : null;
+    return res.json(veiculo);
   } catch (err) {
-    res.status(500).json({ error: 'Erro ao editar veículo', detalhes: err.message });
+    return res
+      .status(500)
+      .json({ error: 'Erro ao editar veículo', detalhes: err.message });
   }
 };
 
