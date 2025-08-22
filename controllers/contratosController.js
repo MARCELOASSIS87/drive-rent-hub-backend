@@ -31,13 +31,25 @@ function deepMerge(target, ...sources) {
 function pickPatch(p) {
   const out = {};
   if (!p || typeof p !== 'object') return out;
+
   if (p.pagamento && typeof p.pagamento === 'object') {
     out.pagamento = {};
     if (p.pagamento.valor_por_dia != null) {
       out.pagamento.valor_por_dia = Number(p.pagamento.valor_por_dia);
     }
   }
-  // (se no futuro permitir mais campos, adicione aqui com whitelist)
+  if (p.aluguel && typeof p.aluguel === 'object') {
+    out.aluguel = {};
+    if (p.aluguel.local_retirada != null) {
+      out.aluguel.local_retirada = String(p.aluguel.local_retirada);
+    }
+    if (p.aluguel.local_devolucao != null) {
+      out.aluguel.local_devolucao = String(p.aluguel.local_devolucao);
+    }
+    // (se no futuro aceitar datas pelo PUT, liberar aqui)
+    // if (p.aluguel.data_inicio) out.aluguel.data_inicio = p.aluguel.data_inicio;
+    // if (p.aluguel.data_fim) out.aluguel.data_fim = p.aluguel.data_fim;
+  }
   return out;
 }
 async function canAccessContrato({ contrato, user, admin }) {
@@ -84,36 +96,61 @@ exports.atualizarContrato = async (req, res) => {
     return res.status(404).json({ error: 'Contrato não encontrado' });
   }
 
-  // 2) Autorização primeiro (evita 500 quando deveria ser 403)
-  await assertProprietarioDoVeiculoOrAdmin({
-    user: req.user,
-    admin: req.admin,
-    veiculoId: contratoRow.veiculo_id,
-  });
+  // 2.2) AUTORIZAÇÃO PRIMEIRO
+  // Preferir util existente; se não lançar, fazer fallback explícito
+  let authorized = false;
+  try {
+    if (typeof assertProprietarioDoVeiculoOrAdmin === 'function') {
+      await assertProprietarioDoVeiculoOrAdmin({
+        user: req.user,
+        admin: req.admin,
+        veiculoId: contratoRow.veiculo_id,
+      });
+      authorized = true;
+    }
+  } catch (e) {
+    return res.status(e.status || 403).json({ error: e.message || 'Proibido' });
+  }
+  if (!authorized) {
+    const isAdmin = !!req.admin;
+    const isOwner = req?.user?.role === 'proprietario' && req?.user?.id === contratoRow.proprietario_id;
+    if (!isAdmin && !isOwner) {
+      return res.status(403).json({ error: 'Proibido' });
+    }
+  }
 
-  // 3) Interpretar payload: aceitar string JSON ou objeto
+  // 2.3) Interpretar payload (aceitar objeto OU string)
   const patch = coerceJsonObject(req.body?.dados_json ?? req.body);
   if (patch.__invalid_json__) {
     return res.status(400).json({ error: 'dados_json inválido' });
   }
 
-  // 4) Deep-merge no snapshot atual (dados_json salvo)
+  // 2.4) Deep-merge no snapshot atual
   const atual = coerceJsonObject(contratoRow.dados_json);
   const atualizado = deepMerge({}, atual, pickPatch(patch));
 
-  // 5) Recalcular dias e valor_total
-  // datas de referência: use as que já estão no snapshot
-  const dataInicio = new Date(atualizado?.detalhes?.data_inicio || atual?.detalhes?.data_inicio);
-  const dataFim = new Date(atualizado?.detalhes?.data_fim || atual?.detalhes?.data_fim);
+  // 2.5) Recalcular dias e valor_total
+  const dataInicio = new Date(
+    atualizado?.aluguel?.data_inicio ??
+    atual?.aluguel?.data_inicio ??
+    atualizado?.detalhes?.data_inicio ??
+    atual?.detalhes?.data_inicio
+  );
+  const dataFim = new Date(
+    atualizado?.aluguel?.data_fim ??
+    atual?.aluguel?.data_fim ??
+    atualizado?.detalhes?.data_fim ??
+    atual?.detalhes?.data_fim
+  );
   const msDia = 1000 * 60 * 60 * 24;
   let dias = Math.ceil((dataFim - dataInicio) / msDia);
   if (!Number.isFinite(dias) || dias <= 0) dias = 1;
 
-  // valor_por_dia pode vir em patch.pagamento.valor_por_dia (número ou string)
   const valorPorDia = Number(
-    patch?.pagamento?.valor_por_dia ??
     atualizado?.pagamento?.valor_por_dia ??
-    atualizado?.detalhes?.valor_por_dia
+    patch?.pagamento?.valor_por_dia ??
+    atual?.pagamento?.valor_por_dia ??
+    atual?.detalhes?.valor_por_dia
   );
   if (!Number.isFinite(valorPorDia) || valorPorDia <= 0) {
     return res.status(422).json({ error: 'valor_por_dia inválido' });
@@ -123,21 +160,20 @@ exports.atualizarContrato = async (req, res) => {
     ...(atualizado.pagamento || {}),
     valor_por_dia: valorPorDia,
     dias,
-    valor_total: dias * valorPorDia
+    valor_total: dias * valorPorDia,
   };
 
-  // 6) Regerar HTML a partir do snapshot atualizado
+  // 2.6) Regerar HTML a partir do snapshot atualizado
   const html = (typeof generateContractHtml === 'function')
     ? generateContractHtml(atualizado)
     : `<pre>${JSON.stringify(atualizado, null, 2)}</pre>`;
 
-  // 7) Persistir atualização
+  // 2.7) Persistir
   await pool.query(
     'UPDATE contratos SET dados_json=?, arquivo_html=? WHERE id=?',
     [JSON.stringify(atualizado), html, contratoRow.id]
   );
 
-  // 8) Retorno
   return res.status(200).json({ ok: true, contrato_id: contratoRow.id });
 };
 
