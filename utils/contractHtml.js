@@ -1,4 +1,36 @@
-module.exports = function generateContractHtml({ locador, motorista, veiculo, aluguel, pagamento }) {
+function buildContractSnapshot({ solicitacao, aluguel, veiculo, proprietario, motorista, detalhes }) {
+  const inicio = new Date(solicitacao.data_inicio);
+  const fim = new Date(solicitacao.data_fim);
+  const dias = Math.max(1, Math.ceil((fim - inicio) / (1000 * 60 * 60 * 24)));
+  const valor_total = dias * detalhes.valor_por_dia;
+  return {
+    aluguel: {
+      id: aluguel.id,
+      data_inicio: solicitacao.data_inicio,
+      data_fim: solicitacao.data_fim,
+      dias,
+      valor_total,
+      local_retirada: detalhes.local_retirada,
+      local_devolucao: detalhes.local_devolucao,
+    },
+    locador: proprietario,
+    veiculo: {
+      id: veiculo.id,
+      ano: veiculo.ano,
+      marca: veiculo.marca,
+      modelo: veiculo.modelo,
+      placa: veiculo.placa,
+      renavam: veiculo.renavam,
+    },
+    motorista,
+    pagamento: {
+      forma: detalhes.forma_pagamento,
+      valor_por_dia: detalhes.valor_por_dia,
+    },
+  };
+}
+
+function generateContractHtml({ locador, motorista, veiculo, aluguel, pagamento }) {
   return `
     <h1>CONTRATO DE LOCAÇÃO DE AUTOMÓVEL POR PRAZO DETERMINADO</h1>
 
@@ -16,8 +48,7 @@ module.exports = function generateContractHtml({ locador, motorista, veiculo, al
     <p>O LOCATÁRIO se compromete a devolver o veículo nas mesmas condições de uso e conservação, conforme laudo de vistoria anexo, respondendo por eventuais danos.</p>
 
     <h2>CLÁUSULA 4ª – DO PRAZO</h2>
-    <p>O presente contrato terá duração de ${Math.ceil((new Date(aluguel.data_fim) - new Date(aluguel.data_inicio))/(1000*60*60*24))} dias, com início em ${new Date(aluguel.data_inicio).toLocaleDateString('pt-BR')} e término em ${new Date(aluguel.data_fim).toLocaleDateString('pt-BR')}, podendo ser renovado mediante acordo escrito.</p>
-
+    <p>O presente contrato terá duração de ${aluguel.dias} dias, com início em ${new Date(aluguel.data_inicio).toLocaleDateString('pt-BR')} e término em ${new Date(aluguel.data_fim).toLocaleDateString('pt-BR')}, podendo ser renovado mediante acordo escrito.</p>
     <h2>RETIRADA E DEVOLUÇÃO</h2>
     <p>Retirada: ${aluguel.local_retirada || '[definir]'}</p>
     <p>Devolução: ${aluguel.local_devolucao || '[definir]'}</p>
@@ -32,13 +63,8 @@ module.exports = function generateContractHtml({ locador, motorista, veiculo, al
     <p>O descumprimento acarretará multa de R$ 1.600,00 (mil e seiscentos reais).</p>
 
     <h2>CLÁUSULA 8ª – DO PAGAMENTO</h2>
-    <p>O valor da locação é de ${pagamento.valor_por_dia || '[valor]'} por dia, pago via transferência ou Pix para:</p>
-    <ul>
-      <li>Banco: ${pagamento.banco}</li>
-      <li>Agência: ${pagamento.agencia}</li>
-      <li>Conta: ${pagamento.conta}</li>
-      <li>Chave Pix: ${pagamento.chave_pix}</li>
-    </ul>
+    <p>O valor da locação é de ${pagamento.valor_por_dia || '[valor]'} por dia, pago via ${pagamento.forma}</p>
+   
     <p>Em caso de atraso, multa de 2% e juros de 1% ao mês, pro rata die.</p>
 
     <h2>CLÁUSULA 9ª – DAS MULTAS E INFRAÇÕES</h2>
@@ -74,3 +100,4 @@ module.exports = function generateContractHtml({ locador, motorista, veiculo, al
     Nome: __________________ – CPF: ________________</p>
   `;
 };
+module.exports = { buildContractSnapshot, generateContractHtml };

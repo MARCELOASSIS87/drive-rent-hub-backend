@@ -62,33 +62,18 @@ exports.editarAdmin = async (req, res) => {
 };
 // Aprovar veículo
 exports.aprovarVeiculo = async (req, res) => {
+  if (!req.user || !['comum', 'super', 'admin'].includes(req.user.role)) {
+    return res.status(403).json({ error: 'Acesso negado' });
+  }
   const { id } = req.params;
   try {
-    const [rows] = await pool.query(
-      'SELECT id, proprietario_id FROM veiculos WHERE id = ?',
-      [id]
-    );
-    if (rows.length === 0) {
-      return res.status(404).json({ error: 'Veículo não encontrado' });
-    }
-    const veiculo = rows[0];
-    if (veiculo.proprietario_id === null) {
-      return res.status(400).json({ error: 'Veículo sem proprietário' });
-    }
-    await pool.query(
-      "UPDATE veiculos SET status = 'disponivel', ativo = 1 WHERE id = ?",
-      [id]
-    );
-    const [atualizado] = await pool.query(
-      'SELECT * FROM veiculos WHERE id = ?',
-      [id]
-    );
-    return res.status(200).json(atualizado[0]);
+    const [result] = await pool.query('UPDATE veiculos SET status="disponivel", ativo=1 WHERE id=?', [id]);
+    if (result.affectedRows === 0) return res.status(404).json({ error: 'Veículo não encontrado' });
+    res.json({ ok: true });
   } catch (err) {
-    return res.status(500).json({ error: 'Erro ao aprovar veículo', detalhes: err.message });
+    res.status(500).json({ error: 'Erro ao aprovar veículo' });
   }
 };
-
 // Recusar veículo
 exports.recusarVeiculo = async (req, res) => {
   const { id } = req.params;
@@ -106,6 +91,7 @@ exports.recusarVeiculo = async (req, res) => {
     return res.status(500).json({ error: 'Erro ao recusar veículo', detalhes: err.message });
   }
 };
+
 // DELETE /admin/:id
 exports.excluirAdmin = async (req, res) => {
   const { id } = req.params;

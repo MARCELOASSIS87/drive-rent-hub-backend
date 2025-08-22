@@ -1,220 +1,111 @@
 const pool = require('../config/db');
-const contratosModel = require('../models/contratosModel');
-const generateContractHtml = require('../utils/contractHtml');
-const pdf = require('html-pdf');
+const { generateContractHtml } = require('../utils/contractHtml');
+const { assertProprietarioDoVeiculoOrAdmin } = require('../utils/ownership');
 
-// Dados fixos do locador (podem vir de variáveis de ambiente ou configuração)
-const LOCADOR_INFO = {
-  nome: process.env.LOCADOR_NOME || 'LocaPocos',
-  nacionalidade: process.env.LOCADOR_NACIONALIDADE || '',
-  estado_civil: process.env.LOCADOR_ESTADO_CIVIL || '',
-  profissao: process.env.LOCADOR_PROFISSAO || '',
-  cpf: process.env.LOCADOR_CPF || '',
-  rg: process.env.LOCADOR_RG || '',
-  endereco: process.env.LOCADOR_ENDERECO || ''
-};
-exports.gerarContrato = async (req, res) => {
-  const {
-    aluguel_id,
-    banco,
-    agencia,
-    conta,
-    chave_pix,
-    endereco_retirada,
-    endereco_devolucao,
-  } = req.body;
-
-  if (!aluguel_id || !banco || !agencia || !conta || !chave_pix) {
-    return res.status(400).json({
-      error: 'aluguel_id, banco, agencia, conta e chave_pix são obrigatórios',
-    });
+function deepMerge(target, source) {
+  for (const key of Object.keys(source)) {
+    const val = source[key];
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      if (!target[key] || typeof target[key] !== 'object') target[key] = {};
+      deepMerge(target[key], val);
+    } else {
+      target[key] = val;
+    }
   }
+  return target;
+}
 
+async function canAccessContrato({ contrato, user, admin }) {
+  if (admin) return true;
+  if (!user) return false;
+  if (user.role === 'motorista' && contrato.motorista_id === user.id) return true;
+  if (user.role === 'proprietario') {
+    try {
+      await assertProprietarioDoVeiculoOrAdmin({ user, admin, veiculoId: contrato.veiculo_id });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+  return false;
+}
+
+exports.obterContrato = async (req, res) => {
+  const { id } = req.params;
   try {
-    const [rows] = await pool.query(
-      `SELECT s.*, m.nome, m.cpf,
-              v.marca, v.modelo, v.placa, v.renavam, v.ano,
-              v.proprietario_id,
-              p.nome      AS proprietario_nome,
-              p.cpf_cnpj  AS proprietario_documento,
-              p.email     AS proprietario_email,
-              p.telefone  AS proprietario_telefone
-         FROM solicitacoes_aluguel s
-         JOIN motoristas m ON s.motorista_id = m.id
-         JOIN veiculos v   ON s.veiculo_id   = v.id
-         LEFT JOIN proprietarios p ON v.proprietario_id = p.id
-        WHERE s.id = ?`,
-      [aluguel_id]
+    const [[contrato]] = await pool.query('SELECT * FROM contratos WHERE id=?', [id]);
+    if (!contrato) return res.status(404).json({ error: 'Contrato não encontrado' });
+    const allowed = await canAccessContrato({ contrato, user: req.user, admin: req.admin });
+    if (!allowed) return res.status(403).json({ error: 'Sem permissão' });
+    return res.json(contrato);
+  } catch (err) {
+    return res.status(500).json({ error: 'Erro ao buscar contrato', detalhes: err.message });
+  }
+};
+
+exports.atualizarContrato = async (req, res) => {
+  const { id } = req.params;
+  let connection;
+  try {
+    const [[contrato]] = await pool.query('SELECT * FROM contratos WHERE id=?', [id]);
+    if (!contrato) return res.status(404).json({ error: 'Contrato não encontrado' });
+    await assertProprietarioDoVeiculoOrAdmin({ user: req.user, admin: req.admin, veiculoId: contrato.veiculo_id });
+    const current = contrato.dados_json ? JSON.parse(contrato.dados_json) : {};
+    const merged = deepMerge(current, req.body || {});
+    if (merged.aluguel && merged.pagamento) {
+      const start = new Date(merged.aluguel.data_inicio);
+      const end = new Date(merged.aluguel.data_fim);
+      const dias = Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)));
+      merged.aluguel.dias = dias;
+      merged.aluguel.valor_total = dias * (merged.pagamento.valor_por_dia || 0);
+    }
+    const html = generateContractHtml(merged);
+    connection = await pool.getConnection();
+    await connection.query(
+      'UPDATE contratos SET dados_json=?, arquivo_html=?, status=? WHERE id=?',
+      [JSON.stringify(merged), html, 'em_negociacao', id]
     );
-
-    let sol = rows[0];
-    if (!sol) {
-      return res.status(404).json({ error: 'Dados não encontrados' });
-    }
-    if (endereco_retirada || endereco_devolucao) {
-      await pool.query(
-        `UPDATE solicitacoes_aluguel
-           SET endereco_retirada = COALESCE(?, endereco_retirada),
-               endereco_devolucao = COALESCE(?, endereco_devolucao)
-         WHERE id = ?`,
-        [endereco_retirada || null, endereco_devolucao || null, aluguel_id]
-      );
-
-      const [atualizadas] = await pool.query(
-        `SELECT s.*, m.nome, m.cpf,
-                v.marca, v.modelo, v.placa, v.renavam, v.ano,
-                v.proprietario_id,
-                p.nome     AS proprietario_nome,
-                p.cpf_cnpj AS proprietario_documento,
-                p.email    AS proprietario_email,
-                p.telefone AS proprietario_telefone
-           FROM solicitacoes_aluguel s
-           JOIN motoristas m ON s.motorista_id = m.id
-           JOIN veiculos v   ON s.veiculo_id   = v.id
-           LEFT JOIN proprietarios p ON v.proprietario_id = p.id
-          WHERE s.id = ?`,
-        [aluguel_id]
-      );
-      sol = atualizadas[0];
-    }
-    const motorista = {
-      nome: sol.nome,
-      cpf: sol.cpf,
-      nacionalidade: sol.nacionalidade,
-      estado_civil: sol.estado_civil,
-      profissao: sol.profissao,
-      rg: sol.rg,
-      endereco: sol.endereco
-    };
-
-    const veiculo = {
-      marca: sol.marca,
-      modelo: sol.modelo,
-      placa: sol.placa,
-      renavam: sol.renavam,
-      ano: sol.ano
-    };
-
-    const aluguel = {
-      id: sol.id,
-      data_inicio: sol.data_inicio,
-      data_fim: sol.data_fim,
-      valor_total: sol.valor_total,
-      local_retirada: sol.endereco_retirada,
-      local_devolucao: sol.endereco_devolucao
-    };
-
-    const pagamento = { banco, agencia, conta, chave_pix };
-
-    const locador = sol.proprietario_id
-      ? {
-        nome: sol.proprietario_nome,
-        nacionalidade: '',
-        estado_civil: '',
-        profissao: '',
-        cpf: sol.proprietario_documento,
-        rg: '',
-        endereco: ''
-      }
-      : LOCADOR_INFO;
-
-    const contratoHtml = generateContractHtml({
-      locador,
-      motorista,
-      veiculo,
-      aluguel,
-      pagamento,
-    });
-
-    const contratoData = {
-      aluguel_id: sol.id,
-      motorista_id: sol.motorista_id,
-      veiculo_id: sol.veiculo_id,
-      status: 'aguardando_assinatura',
-      arquivo_html: contratoHtml,
-    };
-    if (sol.proprietario_id) {
-      contratoData.proprietario_id = sol.proprietario_id;
-    }
-    const contratoId = await contratosModel.criarContrato(contratoData);
-    res.status(201).json({ id: contratoId });
+    return res.json({ ok: true });
   } catch (err) {
-    console.error('Erro em gerarContrato:', err);
-    res
-      .status(500)
-      .json({ error: 'Erro ao gerar contrato', detalhes: err.message });
+    return res.status(err.status || 500).json({ error: err.message });
+  } finally {
+    if (connection) connection.release();
   }
 };
 
-// GET /contratos/:id
-exports.visualizarContrato = async (req, res) => {
+exports.publicarContrato = async (req, res) => {
+  const { id } = req.params;
   try {
-    const { id } = req.params;
-    const contrato = await contratosModel.buscarPorId(id);
-    if (!contrato) {
-      return res.status(404).json({ error: 'Contrato não encontrado' });
+    const [[contrato]] = await pool.query('SELECT * FROM contratos WHERE id=?', [id]);
+    if (!contrato) return res.status(404).json({ error: 'Contrato não encontrado' });
+    await assertProprietarioDoVeiculoOrAdmin({ user: req.user, admin: req.admin, veiculoId: contrato.veiculo_id });
+    if (contrato.status !== 'em_negociacao') {
+      return res.status(409).json({ error: 'Status inválido' });
     }
-
-    const usuario = req.user;
-    if (usuario.role !== 'admin' && contrato.motorista_id !== usuario.id) {
-      return res.status(403).json({ error: 'Acesso negado' });
-    }
-
-    res.type('html').send(contrato.arquivo_html);
+    await pool.query('UPDATE contratos SET status=? WHERE id=?', ['pronto_para_assinatura', id]);
+    return res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: 'Erro ao buscar contrato', detalhes: err.message });
+    return res.status(err.status || 500).json({ error: err.message });
   }
 };
-// GET /contratos/:id/pdf
-exports.baixarContratoPdf = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const contrato = await contratosModel.buscarPorId(id);
-    if (!contrato) {
-      return res.status(404).json({ error: 'Contrato não encontrado' });
-    }
-    // Converte HTML em PDF
-    pdf.create(contrato.arquivo_html, { format: 'A4' }).toBuffer((err, buffer) => {
-      if (err) return res.status(500).json({ error: 'Erro ao gerar PDF' });
-      res.type('application/pdf');
-      res.send(buffer);
-    });
-  } catch (err) {
-    res.status(500).json({ error: 'Erro ao baixar PDF', detalhes: err.message });
-  }
-};
-// POST /contratos/:id/assinar
+
 exports.assinarContrato = async (req, res) => {
+  const { id } = req.params;
   try {
-    const { id } = req.params;
-    const contrato = await contratosModel.buscarPorId(id);
-    if (!contrato) {
-      return res.status(404).json({ error: 'Contrato não encontrado' });
+    const [[contrato]] = await pool.query('SELECT * FROM contratos WHERE id=?', [id]);
+    if (!contrato) return res.status(404).json({ error: 'Contrato não encontrado' });
+    if (!req.user || req.user.role !== 'motorista' || contrato.motorista_id !== req.user.id) {
+      return res.status(403).json({ error: 'Apenas o motorista pode assinar' });
     }
-
-    const usuario = req.user;
-    if (contrato.motorista_id !== usuario.id) {
-      return res.status(403).json({ error: 'Somente o motorista pode assinar' });
+    if (!['pronto_para_assinatura', 'em_negociacao'].includes(contrato.status)) {
+      return res.status(409).json({ error: 'Status inválido' });
     }
-
-    const ip = req.ip;
-    await contratosModel.assinarContrato(id, ip);
-    const atualizado = await contratosModel.buscarPorId(id);
-    res.json({ status: atualizado.status });
+    await pool.query(
+      'UPDATE contratos SET status="assinado", assinatura_data=NOW(), assinatura_ip=? WHERE id=?',
+      [req.ip, id]
+    );
+    return res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: 'Erro ao assinar contrato', detalhes: err.message });
-  }
-};
-// GET /contratos
-exports.listarContratos = async (req, res) => {
-  try {
-    // Chama a função do model que retorna todos os contratos
-    const contratos = await contratosModel.listarContratos();
-    return res.json(contratos);
-  } catch (err) {
-    console.error('Erro ao listar contratos:', err);
-    return res
-      .status(500)
-      .json({ error: 'Erro ao listar contratos', detalhes: err.message });
+    return res.status(500).json({ error: err.message });
   }
 };
