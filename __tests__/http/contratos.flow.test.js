@@ -97,12 +97,53 @@ async function criarSolicitacao(tokenMot, veiculoId, datas) {
   return { solicitacaoId: res.body.id };
 }
 
-async function aprovarSolicitacaoComoProprietario(tokenProp, solicitacaoId, detalhes) {
+async function aprovarSolicitacaoComoProprietario(tokenProp, solicitacaoId, overrides = {}) {
+  const payload = {
+    valor_por_dia: overrides.valor_por_dia ?? 120,
+    forma_pagamento: overrides.forma_pagamento ?? 'pix',
+    local_retirada: overrides.local_retirada ?? 'Pátio Central',
+    local_devolucao: overrides.local_devolucao ?? 'Pátio Norte',
+
+    // >>> dados civis do MOTORISTA (obrigatórios)
+    dados_legais: {
+      rg: '12.345.678-9',
+      orgao_expeditor: 'SSP',
+      uf_rg: 'SP',
+      nacionalidade: 'brasileiro',
+      estado_civil: 'solteiro', // ENUM: 'solteiro','casado','divorciado','viuvo','uniao_estavel'
+      profissao: 'Motorista',
+      endereco_logradouro: 'Rua Alfa',
+      endereco_numero: '100',
+      endereco_bairro: 'Centro',
+      endereco_cidade: 'São Paulo',
+      endereco_uf: 'SP',
+      endereco_cep: '01000-000',
+      ...(overrides.dados_legais || {}),
+    },
+
+    // >>> dados civis do PROPRIETÁRIO (obrigatórios)
+    dados_legais_proprietario: {
+      rg: '98.765.432-1',
+      orgao_expeditor: 'SSP',
+      uf_rg: 'SP',
+      nacionalidade: 'brasileiro',
+      estado_civil: 'casado',
+      profissao: 'Proprietário de Veículos',
+      endereco_logradouro: 'Av. Beta',
+      endereco_numero: '200',
+      endereco_bairro: 'Jardins',
+      endereco_cidade: 'São Paulo',
+      endereco_uf: 'SP',
+      endereco_cep: '01400-000',
+      ...(overrides.dados_legais_proprietario || {}),
+    },
+  };
+
   const res = await request(app)
     .put(`/solicitacoes/${solicitacaoId}/aprovar`)
     .set('Authorization', `Bearer ${tokenProp}`)
-    .send(detalhes);
-  // <<< DIAGNÓSTICO >>>
+    .send(payload);
+
   if (![200, 201].includes(res.statusCode)) {
     console.error(
       '[APROVAR SOLICITAÇÃO] status:',
@@ -111,15 +152,20 @@ async function aprovarSolicitacaoComoProprietario(tokenProp, solicitacaoId, deta
       '| text:', res.text
     );
     throw new Error('Falha ao aprovar solicitacao');
-  } let contratoId = res.body.contrato_id;
-  let aluguelId = res.body.aluguel_id;
-  if (!contratoId) {
-    const [[last]] = await pool.query('SELECT id, aluguel_id FROM contratos ORDER BY id DESC LIMIT 1');
-    contratoId = last?.id;
-    aluguelId = last?.aluguel_id;
+  }
+
+  let { contrato_id: contratoId, aluguel_id: aluguelId } = res.body;
+  if (!contratoId || !aluguelId) {
+    const [[last]] = await pool.query(
+      'SELECT id AS contrato_id, aluguel_id FROM contratos ORDER BY id DESC LIMIT 1'
+    );
+    contratoId = contratoId || last?.contrato_id;
+    aluguelId = aluguelId || last?.aluguel_id;
   }
   return { contratoId, aluguelId };
 }
+
+
 
 describe('Fluxo de Contratos (editar → publicar → assinar)', () => {
   beforeEach(async () => {
@@ -151,13 +197,18 @@ describe('Fluxo de Contratos (editar → publicar → assinar)', () => {
       .put(`/contratos/${contratoId}`)
       .set('Authorization', `Bearer ${tokenProp}`)
       .send({
-        aluguel: {
-          local_retirada: 'Ponto A',
-          local_devolucao: 'Ponto B',
-          data_fim: fim2Iso
-        },
         pagamento: { valor_por_dia: 150 }
       });
+
+    // DIAGNÓSTICO
+    if (![200, 201, 204].includes(edit.statusCode)) {
+      console.error(
+        '[EDIT CONTRATO] status:',
+        edit.statusCode,
+        '| body:', edit.body,
+        '| text:', edit.text
+      );
+    }
     expect([200, 201, 204]).toContain(edit.statusCode);
 
     const publicar = await request(app)
@@ -208,6 +259,16 @@ describe('Fluxo de Contratos (editar → publicar → assinar)', () => {
       .put(`/contratos/${contratoId}`)
       .set('Authorization', `Bearer ${tokenProp2}`)
       .send({ pagamento: { valor_por_dia: 10 } });
+    // DIAGNÓSTICO
+    if (edit403.statusCode !== 403) {
+      console.error(
+        '[EDIT CONTRATO 403?] status:',
+        edit403.statusCode,
+        '| body:', edit403.body,
+        '| text:', edit403.text
+      );
+    }
+
     expect(edit403.statusCode).toBe(403);
 
     const { token: tokenMot2 } = await criarELogarMotorista();
