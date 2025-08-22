@@ -20,14 +20,14 @@ echo "----------------------------------------"
 # 3. Adiciona todas as alterações ao stage (arquivos novos, modificados e deletados).
 echo "🔄 Adicionando todas as alterações ao Git..."
 git add .
-
+git status
 # 4. Faz o commit com a mensagem fornecida pelo usuário.
 echo "📝 Realizando o commit com a mensagem: '$COMMIT_MESSAGE'"
 git commit -m "$COMMIT_MESSAGE"
 
 # 5. Envia as alterações para a branch 'master' no repositório remoto 'origin'.
-echo "🚀 Enviando alterações para a branch 'main'..."
-git push origin main
+echo "🚀 Enviando alterações para a branch 'prop'..."
+git push origin prop
 
 echo "----------------------------------------" 
-echo "✅ Sucesso! Suas alterações foram enviadas para a branch 'main'."
+echo "✅ Sucesso! Suas alterações foram enviadas para a branch 'prop'."

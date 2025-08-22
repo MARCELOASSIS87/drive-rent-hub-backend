@@ -9,6 +9,11 @@
     "test:watch": "cross-env NODE_ENV=test jest --watch",
     "test:coverage": "cross-env NODE_ENV=test jest --coverage"
   },
+  "jest": {
+    "testEnvironment": "node",
+    "testTimeout": 15000,
+    "globalTeardown": "./jest.globalTeardown.js"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",

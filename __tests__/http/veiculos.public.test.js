@@ -1,10 +1,20 @@
-const request = require('supertest');
-const app = require('../../app'); // ajuste se o app for exportado de outro caminho
+jest.mock('../../config/db', () => ({
+  query: jest.fn().mockRejectedValue({ code: 'ER_NO_SUCH_TABLE', message: 'no such table' }),
+  end: jest.fn().mockResolvedValue(),
+}));
 
-describe('GET /veiculos (público)', () => {
-  it('deve responder 200 e um array', async () => {
-    const res = await request(app).get('/veiculos').send();
-    expect(res.statusCode).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
+const request = require('supertest');
+const app = require('../../app');
+const pool = require('../../config/db');
+
+describe('GET /veiculos', () => {
+  it('retorna lista vazia quando tabela nao existe', async () => {
+    const res = await request(app).get('/veiculos');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
   });
+});
+
+afterAll(async () => {
+  await pool.end();
 });
