@@ -1,6 +1,7 @@
 const request = require('supertest');
 const app = require('../../app');
 const pool = require('../../config/db');
+const { resetAll } = require('../helpers/resetDb');
 
 describe('Cadastro de Proprietário (POST /proprietarios)', () => {
   beforeAll(async () => {
@@ -19,7 +20,7 @@ describe('Cadastro de Proprietário (POST /proprietarios)', () => {
   });
 
   beforeEach(async () => {
-    await pool.query('TRUNCATE TABLE proprietarios');
+    await resetAll();
   });
 
   it('deve cadastrar e gravar senha como hash, status pendente', async () => {

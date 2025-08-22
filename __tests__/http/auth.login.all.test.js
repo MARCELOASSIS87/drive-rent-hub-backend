@@ -2,13 +2,11 @@ const request = require('supertest');
 const bcrypt = require('bcrypt');
 const app = require('../../app');
 const pool = require('../../config/db');
+const { resetAll } = require('../helpers/resetDb');
 
 describe('POST /auth/login — admin, motorista e proprietario', () => {
   beforeEach(async () => {
-    // limpeza isolada por teste
-    await pool.query('TRUNCATE TABLE admins');
-    await pool.query('TRUNCATE TABLE motoristas');
-    await pool.query('TRUNCATE TABLE proprietarios');
+    await resetAll();
   });
 
   it('deve logar como ADMIN e retornar token + role do admin', async () => {

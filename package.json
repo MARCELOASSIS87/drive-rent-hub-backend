@@ -12,7 +12,8 @@
   "jest": {
     "testEnvironment": "node",
     "testTimeout": 15000,
-    "globalTeardown": "./jest.globalTeardown.js"
+    "globalTeardown": "./jest.globalTeardown.js",
+    "testPathIgnorePatterns": ["/node_modules/", "__tests__/helpers/"]
   },
   "keywords": [],
   "author": "",

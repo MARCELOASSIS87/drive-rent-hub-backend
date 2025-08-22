@@ -1,6 +1,7 @@
 const request = require('supertest');
 const app = require('../../app');
 const pool = require('../../config/db');
+const { resetAll } = require('../helpers/resetDb');
 
 describe('Cadastro de Motorista (POST /motoristas)', () => {
   beforeAll(async () => {
@@ -30,7 +31,7 @@ describe('Cadastro de Motorista (POST /motoristas)', () => {
   });
 
   beforeEach(async () => {
-    await pool.query('TRUNCATE TABLE motoristas');
+    await resetAll();
   });
 
   it('deve cadastrar motorista e gravar senha como hash, status em_analise', async () => {
