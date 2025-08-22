@@ -1,11 +1,11 @@
 const pool = require('../config/db');
 const allowedStatuses = ['disponivel', 'alugado', 'manutencao', 'inativo'];
 
-// Listar todos os veículos (ativos)
+// Listar todos os veículos públicos (apenas disponíveis e ativos)
 exports.listarVeiculos = async (req, res) => {
   try {
     const [veiculos] = await pool.query(
-      'SELECT * FROM veiculos WHERE ativo = 1'
+      "SELECT * FROM veiculos WHERE status = 'disponivel' AND ativo = 1"
     );
     const normalizados = veiculos.map(v => ({
       ...v,
@@ -64,8 +64,10 @@ exports.obterVeiculo = async (req, res) => {
 
 // Criar novo veículo
 exports.criarVeiculo = async (req, res) => {
-  console.log('CONTEÚDO DE REQ.BODY:', req.body);
-  console.log('CONTEÚDO DE REQ.FILES:', req.files);
+  if (process.env.NODE_ENV !== 'test') {
+    console.log('CONTEÚDO DE REQ.BODY:', req.body);
+    console.log('CONTEÚDO DE REQ.FILES:', req.files);
+  }
   if (!req.user) {
     return res.status(401).json({ error: 'Não autenticado' });
   }
@@ -86,10 +88,7 @@ exports.criarVeiculo = async (req, res) => {
     manutencao_proxima_data,
     valor_diaria
   } = req.body;
-  const status = req.body.status || 'disponivel';
-  if (!allowedStatuses.includes(status)) {
-    return res.status(400).json({ error: 'Status inválido' });
-  }
+  const status = 'inativo';
   const valorDiariaNumber = parseFloat(valor_diaria);
   if (isNaN(valorDiariaNumber) || valorDiariaNumber < 0) {
     return res

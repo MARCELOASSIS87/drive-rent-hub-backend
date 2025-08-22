@@ -29,22 +29,32 @@ const validarValorDiaria = (req, res, next) => {
   }
   next();
 };
+// Middleware para garantir role de proprietário
+const proprietarioAuth = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Não autenticado' });
+  }
+  if (req.user.role !== 'proprietario') {
+    return res.status(403).json({ error: 'Apenas proprietários' });
+  }
+  next();
+};
 // Rotas de CRUD de veículos
 router.get('/', veiculosController.listarVeiculos);
 router.get('/meus', auth, veiculosController.listarMeusVeiculos);
 router.get('/:id', veiculosController.obterVeiculo);
-router.post(  '/',  auth,  upload.fields([
-    { name: 'foto_principal', maxCount: 1 },
-    { name: 'fotos', maxCount: 10 }
-  ]),
+router.post('/', auth, proprietarioAuth, upload.fields([
+  { name: 'foto_principal', maxCount: 1 },
+  { name: 'fotos', maxCount: 10 }
+]),
   validarValorDiaria,
   veiculosController.criarVeiculo
 );
-router.put(  '/:id/status',  auth,  veiculosController.atualizarStatus);
-router.put(  '/:id',  auth,  upload.fields([
-    { name: 'foto_principal', maxCount: 1 },
-    { name: 'fotos', maxCount: 10 }
-  ]),
+router.put('/:id/status', auth, veiculosController.atualizarStatus);
+router.put('/:id', auth, upload.fields([
+  { name: 'foto_principal', maxCount: 1 },
+  { name: 'fotos', maxCount: 10 }
+]),
   validarValorDiaria,
   veiculosController.editarVeiculo
 );

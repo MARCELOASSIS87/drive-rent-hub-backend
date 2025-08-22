@@ -16,4 +16,7 @@ router.delete('/:id',   auth, adminController.excluirAdmin);      // Exclusão l
 router.get(  '/solicitacoes',  auth,  rentalRequestsController.listarSolicitacoes);
 // Atualizar status de uma solicitação (aprovar/recusar)
 router.put(  '/solicitacoes/:id/status',  auth,  rentalRequestsController.atualizarStatus);
+// Aprovação/recusa de veículos
+router.put('/veiculos/:id/aprovar', adminAuth, adminController.aprovarVeiculo);
+router.put('/veiculos/:id/recusar', adminAuth, adminController.recusarVeiculo);
 module.exports = router;
