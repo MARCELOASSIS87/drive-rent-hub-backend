@@ -5,6 +5,9 @@ const pool = require('./config/db'); // importa a pool de conexão do banco
 
 const PORT = process.env.PORT || 3001;
 
+// Exporta o app para o supertest
+module.exports = app;
+
 // Tenta conectar no banco antes de subir o servidor
 (async () => {
   try {
@@ -18,3 +21,9 @@ const PORT = process.env.PORT || 3001;
     process.exit(1);
   }
 })();
+// Só inicia o servidor se este arquivo for executado diretamente
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`API ouvindo na porta ${PORT}`);
+  });
+}
