@@ -9,4 +9,7 @@ router.get('/recebidas', auth, rentalRequestsController.listarSolicitacoesRecebi
 router.put('/:id/aprovar', auth, rentalRequestsController.aprovarSolicitacao);
 router.put('/:id/recusar', auth, rentalRequestsController.recusarSolicitacao);
 
+router.patch('/:id/mark-read/proprietario', auth, rentalRequestsController.markSolicitacaoReadForProprietario);
+router.patch('/:id/mark-read/motorista', auth, rentalRequestsController.markSolicitacaoReadForMotorista);
+
 module.exports = router;

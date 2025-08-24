@@ -67,6 +67,10 @@ exports.criarSolicitacao = async (req, res) => {
        VALUES (?, ?, ?, ?, 'pendente')`,
       [req.user.id, veiculo_id, data_inicio, data_fim]
     );
+    await pool.query(
+      'UPDATE solicitacoes_aluguel SET visto_por_proprietario = 0 WHERE id = ?',
+      [result.insertId]
+    );
     return res.status(201).json({ id: result.insertId });
   } catch (err) {
     return res.status(500).json({ error: 'Erro ao criar solicitação', detalhes: err.message });
@@ -78,14 +82,15 @@ exports.listarMinhasSolicitacoes = async (req, res) => {
     return res.status(403).json({ error: 'Apenas motoristas' });
   }
   try {
-    const [rows] = await pool.query(
-      `SELECT s.*, v.modelo, v.marca, v.placa
+    const unread = req.query.unread === '1';
+    let sql = `SELECT s.*, v.modelo, v.marca, v.placa
          FROM solicitacoes_aluguel s
          JOIN veiculos v ON v.id = s.veiculo_id
-        WHERE s.motorista_id = ?
-        ORDER BY s.id DESC`,
-      [req.user.id]
-    );
+        WHERE s.motorista_id = ?`;
+    const params = [req.user.id];
+    if (unread) sql += ' AND s.visto_por_motorista = 0';
+    sql += ' ORDER BY s.id DESC';
+    const [rows] = await pool.query(sql, params);
     return res.json(rows);
   } catch (err) {
     return res.status(500).json({ error: 'Erro ao buscar solicitações', detalhes: err.message });
@@ -97,14 +102,15 @@ exports.listarSolicitacoesRecebidas = async (req, res) => {
     return res.status(403).json({ error: 'Apenas proprietários' });
   }
   try {
-    const [rows] = await pool.query(
-      `SELECT s.*, v.modelo, v.marca, v.placa
+    const unread = req.query.unread === '1';
+    let sql = `SELECT s.*, v.modelo, v.marca, v.placa
          FROM solicitacoes_aluguel s
          JOIN veiculos v ON v.id = s.veiculo_id
-        WHERE v.proprietario_id = ?
-        ORDER BY s.id DESC`,
-      [req.user.id]
-    );
+        WHERE v.proprietario_id = ?`;
+    const params = [req.user.id];
+    if (unread) sql += ' AND s.visto_por_proprietario = 0';
+    sql += ' ORDER BY s.id DESC';
+    const [rows] = await pool.query(sql, params);
     return res.json(rows);
   } catch (err) {
     return res.status(500).json({ error: 'Erro ao buscar solicitações', detalhes: err.message });
@@ -128,7 +134,7 @@ exports.recusarSolicitacao = async (req, res) => {
       veiculoId: sol.veiculo_id,
     });
     await pool.query(
-      "UPDATE solicitacoes_aluguel SET status='recusado', motivo_recusa=?, updated_at=NOW() WHERE id=?",
+      "UPDATE solicitacoes_aluguel SET status='recusado', motivo_recusa=?, visto_por_motorista=0, visto_por_proprietario=1, updated_at=NOW() WHERE id=?",
       [motivo_recusa || null, id]
     );
     return res.json({ ok: true });
@@ -186,7 +192,7 @@ exports.aprovarSolicitacao = async (req, res) => {
     await connection.beginTransaction();
 
     await connection.query(
-      "UPDATE solicitacoes_aluguel SET status='aprovado', updated_at=NOW() WHERE id=?",
+      "UPDATE solicitacoes_aluguel SET status='aprovado', visto_por_motorista=0, visto_por_proprietario=1, updated_at=NOW() WHERE id=?",
       [id]
     );
 
@@ -455,5 +461,53 @@ exports.aprovarSolicitacao = async (req, res) => {
     return res.status(err.status || 500).json({ error: err.message });
   } finally {
     if (connection) connection.release();
+  }
+};
+exports.markSolicitacaoReadForProprietario = async (req, res) => {
+  if (!req.user || req.user.role !== 'proprietario') {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const { id } = req.params;
+  try {
+    const [[row]] = await pool.query(
+      `SELECT s.id FROM solicitacoes_aluguel s
+         JOIN veiculos v ON v.id = s.veiculo_id
+        WHERE s.id = ? AND v.proprietario_id = ?`,
+      [id, req.user.id]
+    );
+    if (!row) {
+      return res.status(403).json({ ok: false, error: 'forbidden' });
+    }
+    await pool.query(
+      'UPDATE solicitacoes_aluguel SET visto_por_proprietario = 1 WHERE id = ?',
+      [id]
+    );
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+};
+
+exports.markSolicitacaoReadForMotorista = async (req, res) => {
+  if (!req.user || req.user.role !== 'motorista') {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+  const { id } = req.params;
+  try {
+    const [[row]] = await pool.query(
+      `SELECT id FROM solicitacoes_aluguel
+        WHERE id = ? AND motorista_id = ?`,
+      [id, req.user.id]
+    );
+    if (!row) {
+      return res.status(403).json({ ok: false, error: 'forbidden' });
+    }
+    await pool.query(
+      'UPDATE solicitacoes_aluguel SET visto_por_motorista = 1 WHERE id = ?',
+      [id]
+    );
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: 'internal_error' });
   }
 };

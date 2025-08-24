@@ -65,7 +65,25 @@ async function canAccessContrato({ contrato, user, admin }) {
 
   return false;
 }
-
+exports.listarMinhasContratos = async (req, res) => {
+  if (!req.user || req.user.role !== 'motorista') {
+    return res.status(403).json({ error: 'Apenas motoristas' });
+  }
+  try {
+    let sql = `SELECT c.*, v.modelo, v.marca, v.placa
+                 FROM contratos c
+                 JOIN veiculos v ON v.id = c.veiculo_id
+                WHERE c.motorista_id = ?`;
+    if (req.query.unread === '1') {
+      sql += ' AND c.visto_por_motorista = 0';
+    }
+    sql += ' ORDER BY c.id DESC';
+    const [rows] = await pool.query(sql, [req.user.id]);
+    return res.json(rows);
+  } catch (err) {
+    return res.status(500).json({ error: 'Erro ao buscar contratos', detalhes: err.message });
+  }
+};
 
 exports.obterContrato = async (req, res) => {
   const { id } = req.params;
@@ -488,6 +506,13 @@ exports.publicarContrato = async (req, res) => {
       WHERE id = ?`,
     [JSON.stringify(atualiza), id]
   );
+  await pool.query(
+    `UPDATE contratos
+        SET visto_por_motorista = 0,
+            visto_por_proprietario = 1
+      WHERE id = ?`,
+    [id]
+  );
   // DEBUG APÓS SALVAR – ler de volta
   if (process.env.NODE_ENV === 'test') {
     try {
@@ -518,8 +543,59 @@ exports.assinarContrato = async (req, res) => {
       'UPDATE contratos SET status="assinado", assinatura_data=NOW(), assinatura_ip=? WHERE id=?',
       [req.ip, id]
     );
+    await pool.query(
+      `UPDATE contratos
+          SET visto_por_proprietario = 0,
+              visto_por_motorista = 1
+        WHERE id = ?`,
+      [id]
+    );
     return res.json({ ok: true });
   } catch (err) {
     return res.status(500).json({ error: err.message });
+  }
+};
+exports.markContratoReadForMotorista = async (req, res) => {
+  const { id } = req.params;
+  if (!req.user || req.user.role !== 'motorista') {
+    return res.status(403).json({ error: 'Apenas motoristas' });
+  }
+  try {
+    const [[contrato]] = await pool.query(
+      'SELECT motorista_id FROM contratos WHERE id = ?',
+      [id]
+    );
+    if (!contrato) return res.status(404).json({ error: 'Contrato não encontrado' });
+    if (contrato.motorista_id !== req.user.id) {
+      return res.status(403).json({ error: 'Proibido' });
+    }
+    await pool.query('UPDATE contratos SET visto_por_motorista = 1 WHERE id = ?', [id]);
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: 'internal_error' });
+  }
+};
+
+exports.markContratoReadForProprietario = async (req, res) => {
+  const { id } = req.params;
+  if (!req.user || req.user.role !== 'proprietario') {
+    return res.status(403).json({ error: 'Apenas proprietários' });
+  }
+  try {
+    const [[row]] = await pool.query(
+      `SELECT v.proprietario_id
+         FROM contratos c
+         JOIN veiculos v ON v.id = c.veiculo_id
+        WHERE c.id = ?`,
+      [id]
+    );
+    if (!row) return res.status(404).json({ error: 'Contrato não encontrado' });
+    if (row.proprietario_id !== req.user.id) {
+      return res.status(403).json({ error: 'Proibido' });
+    }
+    await pool.query('UPDATE contratos SET visto_por_proprietario = 1 WHERE id = ?', [id]);
+    return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: 'internal_error' });
   }
 };
