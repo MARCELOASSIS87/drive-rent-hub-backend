@@ -1,5 +1,5 @@
 const pool = require('../config/db');
-const { generateContractHtml } = require('../utils/contractHtml');
+const { buildContractSnapshot, generateContractHtml } = require('../utils/contractHtml');
 const { assertProprietarioDoVeiculoOrAdmin } = require('../utils/ownership');
 
 function coerceJsonObject(input) {
@@ -12,27 +12,36 @@ function coerceJsonObject(input) {
   return {};
 }
 
-// parse seguro "YYYY-MM-DD" para Date UTC
-function parseYMDToUTC(d) {
+// normaliza para Date (dia em UTC)
+function toUTCDateOnly(d) {
   if (!d) return null;
-  if (d instanceof Date) return d;
+  if (d instanceof Date) return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
   if (typeof d === 'string') {
     const m = d.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (!m) return null;
-    const y = Number(m[1]), mo = Number(m[2]) - 1, da = Number(m[3]);
-    return new Date(Date.UTC(y, mo, da));
+    if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+    const dt = new Date(d);
+    if (!isNaN(dt)) return new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate()));
   }
   return null;
 }
-
-// diferença em dias, inclusiva (mínimo 1)
+// diferença inclusiva em dias (min 1)
 function daysDiffInclusive(di, df) {
-  const a = parseYMDToUTC(di), b = parseYMDToUTC(df);
+  const a = toUTCDateOnly(di), b = toUTCDateOnly(df);
   if (!a || !b) return null;
   const MS = 1000 * 60 * 60 * 24;
   const diff = Math.round((b - a) / MS);
   return diff > 0 ? diff : 1;
 }
+// serializa como 'YYYY-MM-DD' (usando UTC)
+function toYMD(d) {
+  const dt = toUTCDateOnly(d);
+  if (!dt) return null;
+  const y = dt.getUTCFullYear();
+  const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
+  const da = String(dt.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${da}`;
+}
+
 
 exports.criarSolicitacao = async (req, res) => {
   if (!req.user || req.user.role !== 'motorista') {
@@ -155,18 +164,19 @@ exports.aprovarSolicitacao = async (req, res) => {
       admin: req.admin,
       veiculoId: sol.veiculo_id,
     });
-    const dias = daysDiffInclusive(sol.data_inicio, sol.data_fim);
-    if (dias === null) {
-      return res.status(422).json({ error: 'datas inválidas' });
+    const diQuery = toYMD(sol.data_inicio);
+    const dfQuery = toYMD(sol.data_fim);
+    const diasCheck = daysDiffInclusive(diQuery, dfQuery);
+    if (diasCheck === null) {
+      return res.status(422).json({ error: 'datas inválidas', data_inicio: sol.data_inicio, data_fim: sol.data_fim });
     }
-
     const [[conf]] = await pool.query(
       `SELECT COUNT(*) AS n
          FROM alugueis a
         WHERE a.veiculo_id = ?
           AND a.status IN ('aprovado','pronto_para_assinatura','assinado','em_andamento')
           AND NOT (a.data_fim_prevista < ? OR a.data_inicio > ?)` ,
-      [sol.veiculo_id, sol.data_inicio, sol.data_fim]
+      [sol.veiculo_id, diQuery, dfQuery]
     );
     if (conf.n > 0) {
       return res.status(409).json({ error: 'Conflito de agenda para o veículo no período solicitado' });
@@ -200,6 +210,8 @@ exports.aprovarSolicitacao = async (req, res) => {
       'SELECT id, nome, cpf_cnpj FROM proprietarios WHERE id=?',
       [veiculo.proprietario_id]
     );
+
+
 
     const [[mot]] = await q(
       'SELECT id, nome, cpf FROM motoristas WHERE id=?',
@@ -302,98 +314,124 @@ exports.aprovarSolicitacao = async (req, res) => {
       });
     }
 
-    // ********************************************
-    // 6) Monta objetos normalizados para o template
-    // ********************************************
+    // 6) Monta snapshot/HTML + inserção do contrato (robusto)
+    const diYMD = toYMD(sol.data_inicio);
+    const dfYMD = toYMD(sol.data_fim);
+    const dias = daysDiffInclusive(diYMD, dfYMD);
+    if (dias === null) {
+      await connection.rollback();
+      return res.status(422).json({
+        error: 'datas inválidas',
+        data_inicio: sol.data_inicio,
+        data_fim: sol.data_fim
+      });
+    }
+
+    const vpd = Number(valor_por_dia);
+    if (!Number.isFinite(vpd) || vpd <= 0) {
+      await connection.rollback();
+      return res.status(422).json({ error: 'valor_por_dia inválido' });
+    }
+
+    // objetos “safe” para nunca quebrar template (sempre strings)
     const proprietario = {
-      nome: prop?.nome || '',
-      cpf: prop?.cpf_cnpj || '',
-      rg: propLegal.rg,
-      orgao_expeditor: propLegal.orgao_expeditor,
-      uf_rg: propLegal.uf_rg,
-      nacionalidade: propLegal.nacionalidade,
-      estado_civil: propLegal.estado_civil,
-      profissao: propLegal.profissao,
+      nome: (prop?.nome ?? '').toString(),
+      cpf: (prop?.cpf_cnpj ?? '').toString(),
+      rg: (propLegal?.rg ?? '').toString(),
+      orgao_expeditor: (propLegal?.orgao_expeditor ?? '').toString(),
+      uf_rg: (propLegal?.uf_rg ?? '').toString(),
+      nacionalidade: (propLegal?.nacionalidade ?? '').toString(),
+      estado_civil: (propLegal?.estado_civil ?? '').toString(),
+      profissao: (propLegal?.profissao ?? '').toString(),
       endereco: [
-        propLegal.endereco_logradouro,
-        propLegal.endereco_numero,
-        propLegal.endereco_bairro,
-        (propLegal.endereco_cidade && propLegal.endereco_uf)
+        propLegal?.endereco_logradouro,
+        propLegal?.endereco_numero,
+        propLegal?.endereco_bairro,
+        (propLegal?.endereco_cidade && propLegal?.endereco_uf)
           ? `${propLegal.endereco_cidade}-${propLegal.endereco_uf}`
-          : (propLegal.endereco_cidade || propLegal.endereco_uf),
-        propLegal.endereco_cep,
+          : (propLegal?.endereco_cidade || propLegal?.endereco_uf),
+        propLegal?.endereco_cep,
       ].filter(Boolean).join(', ')
     };
 
     const motorista = {
-      nome: mot?.nome || '',
-      cpf: mot?.cpf || '',
-      rg: legalMot.rg,
-      orgao_expeditor: legalMot.orgao_expeditor,
-      uf_rg: legalMot.uf_rg,
-      nacionalidade: legalMot.nacionalidade,
-      estado_civil: legalMot.estado_civil,
-      profissao: legalMot.profissao,
+      nome: (mot?.nome ?? '').toString(),
+      cpf: (mot?.cpf ?? '').toString(),
+      rg: (legalMot?.rg ?? '').toString(),
+      orgao_expeditor: (legalMot?.orgao_expeditor ?? '').toString(),
+      uf_rg: (legalMot?.uf_rg ?? '').toString(),
+      nacionalidade: (legalMot?.nacionalidade ?? '').toString(),
+      estado_civil: (legalMot?.estado_civil ?? '').toString(),
+      profissao: (legalMot?.profissao ?? '').toString(),
       endereco: [
-        legalMot.endereco_logradouro,
-        legalMot.endereco_numero,
-        legalMot.endereco_bairro,
-        (legalMot.endereco_cidade && legalMot.endereco_uf)
+        legalMot?.endereco_logradouro,
+        legalMot?.endereco_numero,
+        legalMot?.endereco_bairro,
+        (legalMot?.endereco_cidade && legalMot?.endereco_uf)
           ? `${legalMot.endereco_cidade}-${legalMot.endereco_uf}`
-          : (legalMot.endereco_cidade || legalMot.endereco_uf),
-        legalMot.endereco_cep,
+          : (legalMot?.endereco_cidade || legalMot?.endereco_uf),
+        legalMot?.endereco_cep,
       ].filter(Boolean).join(', ')
-    };
-
-    // ********************************************
-    // 7) Detalhes da negociação (não viram colunas)
-    // ********************************************
-    const detalhesContrato = {
-      valor_por_dia: valorDiaNum,
-      forma_pagamento: String(forma_pagamento),
-      local_retirada: String(local_retirada),
-      local_devolucao: String(local_devolucao),
-      data_inicio: sol.data_inicio,
-      data_fim: sol.data_fim,
     };
 
     const aluguelSnap = {
       id: aluguelId,
-      data_inicio: sol.data_inicio,
-      data_fim: sol.data_fim,
+      data_inicio: diYMD,
+      data_fim: dfYMD,
       dias,
       local_retirada: String(local_retirada),
       local_devolucao: String(local_devolucao),
     };
 
     const pagamentoSnap = {
-      valor_por_dia: valorDiaNum,
-      valor_total: dias * valorDiaNum,
+      valor_por_dia: vpd,
+      valor_total: dias * vpd,
     };
 
-    const snapshot = {
-      solicitacao: sol,
-      aluguel: aluguelSnap,
-      veiculo,
-      proprietario,
-      locador: proprietario,
-      motorista,
-      pagamento: pagamentoSnap,
-      detalhes: detalhesContrato,
-      gerado_em: new Date().toISOString(),
-    };
+    let snapshot;
+    try {
+      if (typeof buildContractSnapshot === 'function') {
+        snapshot = buildContractSnapshot({
+          solicitacao: sol,
+          aluguel: aluguelSnap,
+          veiculo,
+          proprietario,
+          motorista,
+          pagamento: pagamentoSnap
+        });
+      }
+    } catch (e) {
+      // opcional: console.warn('buildContractSnapshot falhou:', e.message);
+    }
+    if (!snapshot) {
+      snapshot = {
+        solicitacao: sol,
+        aluguel: aluguelSnap,
+        veiculo,
+        proprietario,
+        motorista,
+        pagamento: pagamentoSnap,
+        gerado_em: new Date().toISOString()
+      };
+    }
 
-    const html = (typeof generateContractHtml === 'function')
-      ? generateContractHtml(snapshot)
-      : `<pre>${JSON.stringify(snapshot, null, 2)}</pre>`;
+    // Blindagem do HTML: se o template quebrar, cai no fallback
+    let html;
+    try {
+      if (typeof generateContractHtml === 'function') {
+        html = generateContractHtml(snapshot);
+      }
+    } catch (e) {
+      // opcional: console.warn('generateContractHtml falhou:', e.message);
+    }
+    if (!html) {
+      html = `<pre>${JSON.stringify(snapshot, null, 2)}</pre>`;
+    }
 
-    // ********************************************
-    // 9) Inserção do contrato (colunas explícitas)
-    // ********************************************
+
     const [contratoRes] = await q(
-      `INSERT INTO contratos
-       (aluguel_id, motorista_id, veiculo_id, status, dados_json, arquivo_html)
-       VALUES (?, ?, ?, 'em_negociacao', ?, ?)`,
+      `INSERT INTO contratos (aluguel_id, motorista_id, veiculo_id, status, dados_json, arquivo_html)
+         VALUES (?, ?, ?, 'em_negociacao', ?, ?)`,
       [aluguelId, sol.motorista_id, sol.veiculo_id, JSON.stringify(snapshot), html]
     );
 

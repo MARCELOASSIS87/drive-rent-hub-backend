@@ -30,4 +30,4 @@ echo "🚀 Enviando alterações para a branch 'prop'..."
 git push origin prop
 
 echo "----------------------------------------" 
-echo "✅ Sucesso! Suas alterações foram enviadas para a branch 'prop'."
+echo "✅ Sucesso! Suas alterações foram enviadas para a branch 'prop'."ajuste de data
