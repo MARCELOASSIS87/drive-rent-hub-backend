@@ -52,6 +52,20 @@ function pickPatch(p) {
   }
   return out;
 }
+// whitelist para POST /contratos/:id/publicar (somente locais)
+function pickPublishPatch(p) {
+  const out = {};
+  if (p && typeof p === 'object' && p.aluguel && typeof p.aluguel === 'object') {
+    out.aluguel = {};
+    if (p.aluguel.local_retirada != null) {
+      out.aluguel.local_retirada = String(p.aluguel.local_retirada);
+    }
+    if (p.aluguel.local_devolucao != null) {
+      out.aluguel.local_devolucao = String(p.aluguel.local_devolucao);
+    }
+  }
+  return out;
+}
 async function canAccessContrato({ contrato, user, admin }) {
   if (admin) return true;
   if (!user) return false;
@@ -162,7 +176,11 @@ exports.atualizarContrato = async (req, res) => {
     dias,
     valor_total: dias * valorPorDia,
   };
-
+  atualizado.aluguel = {
+    ...(atualizado.aluguel || {}),
+    dias,
+    valor_total: dias * valorPorDia,
+  };
   // 2.6) Regerar HTML a partir do snapshot atualizado
   const html = (typeof generateContractHtml === 'function')
     ? generateContractHtml(atualizado)
@@ -179,18 +197,37 @@ exports.atualizarContrato = async (req, res) => {
 
 exports.publicarContrato = async (req, res) => {
   const { id } = req.params;
-  try {
-    const [[contrato]] = await pool.query('SELECT * FROM contratos WHERE id=?', [id]);
-    if (!contrato) return res.status(404).json({ error: 'Contrato não encontrado' });
-    await assertProprietarioDoVeiculoOrAdmin({ user: req.user, admin: req.admin, veiculoId: contrato.veiculo_id });
-    if (contrato.status !== 'em_negociacao') {
-      return res.status(409).json({ error: 'Status inválido' });
-    }
-    await pool.query('UPDATE contratos SET status=? WHERE id=?', ['pronto_para_assinatura', id]);
-    return res.json({ ok: true });
-  } catch (err) {
-    return res.status(err.status || 500).json({ error: err.message });
-  }
+
+  // Carregar contrato + veículo para autorização e snapshot
+  const [[c]] = await pool.query(
+    `SELECT c.id, c.veiculo_id, c.dados_json, c.status, v.proprietario_id
+       FROM contratos c
+       JOIN veiculos v ON v.id = c.veiculo_id
+      WHERE c.id = ?`,
+    [id]
+  );
+  if (!c) return res.status(404).json({ error: 'Contrato não encontrado' });
+
+  // Autorização (proprietário do veículo ou admin)
+  const isAdmin = !!req.admin;
+  const isOwner = req?.user?.role === 'proprietario' && req?.user?.id === c.proprietario_id;
+  if (!isAdmin && !isOwner) return res.status(403).json({ error: 'Proibido' });
+
+  // Interpretar body (objeto ou string JSON) e filtrar somente aluguel.local_*
+  const patch = coerceJsonObject(req.body?.dados_json ?? req.body);
+  if (patch.__invalid_json__) return res.status(400).json({ error: 'dados_json inválido' });
+  const toApply = pickPublishPatch(patch);
+
+  // Merge no snapshot atual e salvar + status
+  const atual = coerceJsonObject(c.dados_json);
+  const atualizado = deepMerge({}, atual, toApply);
+
+  await pool.query(
+    "UPDATE contratos SET dados_json=?, status='pronto_para_assinatura' WHERE id=?",
+    [JSON.stringify(atualizado), c.id]
+  );
+
+  return res.json({ ok: true, contrato_id: c.id });
 };
 
 exports.assinarContrato = async (req, res) => {
