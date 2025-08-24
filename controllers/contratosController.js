@@ -13,19 +13,26 @@ function coerceJsonObject(input) {
   return {};
 }
 
-function deepMerge(target, ...sources) {
-  for (const src of sources) {
-    if (!src || typeof src !== 'object') continue;
-    for (const k of Object.keys(src)) {
-      const v = src[k];
-      if (v && typeof v === 'object' && !Array.isArray(v)) {
-        target[k] = deepMerge(target[k] || {}, v);
-      } else {
-        target[k] = v;
-      }
-    }
+// parse seguro "YYYY-MM-DD" para Date UTC
+function parseYMDToUTC(d) {
+  if (!d) return null;
+  if (d instanceof Date) return d;
+  if (typeof d === 'string') {
+    const m = d.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    const y = Number(m[1]), mo = Number(m[2]) - 1, da = Number(m[3]);
+    return new Date(Date.UTC(y, mo, da));
   }
-  return target;
+  return null;
+}
+
+// diferença em dias, inclusiva (mínimo 1)
+function daysDiffInclusive(di, df) {
+  const a = parseYMDToUTC(di), b = parseYMDToUTC(df);
+  if (!a || !b) return null;
+  const MS = 1000 * 60 * 60 * 24;
+  const diff = Math.round((b - a) / MS);
+  return diff > 0 ? diff : 1;
 }
 // Aceita apenas chaves permitidas no PATCH do contrato
 function pickPatch(p) {
@@ -110,27 +117,14 @@ exports.atualizarContrato = async (req, res) => {
     return res.status(404).json({ error: 'Contrato não encontrado' });
   }
 
-  // 2.2) AUTORIZAÇÃO PRIMEIRO
-  // Preferir util existente; se não lançar, fazer fallback explícito
-  let authorized = false;
-  try {
-    if (typeof assertProprietarioDoVeiculoOrAdmin === 'function') {
-      await assertProprietarioDoVeiculoOrAdmin({
-        user: req.user,
-        admin: req.admin,
-        veiculoId: contratoRow.veiculo_id,
-      });
-      authorized = true;
-    }
-  } catch (e) {
-    return res.status(e.status || 403).json({ error: e.message || 'Proibido' });
+  const isAdmin = !!req.admin;
+  const isOwner = req?.user?.role === 'proprietario' && req?.user?.id === contratoRow.proprietario_id;
+  if (!isAdmin && !isOwner) {
+    return res.status(403).json({ error: 'Proibido' });
   }
-  if (!authorized) {
-    const isAdmin = !!req.admin;
-    const isOwner = req?.user?.role === 'proprietario' && req?.user?.id === contratoRow.proprietario_id;
-    if (!isAdmin && !isOwner) {
-      return res.status(403).json({ error: 'Proibido' });
-    }
+
+  if (contratoRow.status !== 'em_negociacao') {
+    return res.status(409).json({ error: 'Contrato não pode ser editado neste status' });
   }
 
   // 2.3) Interpretar payload (aceitar objeto OU string)
@@ -141,46 +135,28 @@ exports.atualizarContrato = async (req, res) => {
 
   // 2.4) Deep-merge no snapshot atual
   const atual = coerceJsonObject(contratoRow.dados_json);
-  const atualizado = deepMerge({}, atual, pickPatch(patch));
+  const permitido = pickPatch(patch);
+  const atualizado = {
+    ...atual,
+    aluguel: { ...(atual.aluguel || {}), ...(permitido.aluguel || {}) },
+    pagamento: { ...(atual.pagamento || {}), ...(permitido.pagamento || {}) },
+  };
 
-  // 2.5) Recalcular dias e valor_total
-  const dataInicio = new Date(
-    atualizado?.aluguel?.data_inicio ??
-    atual?.aluguel?.data_inicio ??
-    atualizado?.detalhes?.data_inicio ??
-    atual?.detalhes?.data_inicio
+  const dias = daysDiffInclusive(
+    atualizado?.aluguel?.data_inicio ?? atualizado?.detalhes?.data_inicio,
+    atualizado?.aluguel?.data_fim ?? atualizado?.detalhes?.data_fim
   );
-  const dataFim = new Date(
-    atualizado?.aluguel?.data_fim ??
-    atual?.aluguel?.data_fim ??
-    atualizado?.detalhes?.data_fim ??
-    atual?.detalhes?.data_fim
-  );
-  const msDia = 1000 * 60 * 60 * 24;
-  let dias = Math.ceil((dataFim - dataInicio) / msDia);
-  if (!Number.isFinite(dias) || dias <= 0) dias = 1;
+  if (dias === null) {
+    return res.status(422).json({ error: 'datas inválidas no contrato' });
+  }
+  atualizado.aluguel = { ...(atualizado.aluguel || {}), dias };
 
-  const valorPorDia = Number(
-    atualizado?.pagamento?.valor_por_dia ??
-    patch?.pagamento?.valor_por_dia ??
-    atual?.pagamento?.valor_por_dia ??
-    atual?.detalhes?.valor_por_dia
-  );
-  if (!Number.isFinite(valorPorDia) || valorPorDia <= 0) {
+  const vpd = Number(atualizado?.pagamento?.valor_por_dia ?? 0);
+  if (!Number.isFinite(vpd) || vpd <= 0) {
     return res.status(422).json({ error: 'valor_por_dia inválido' });
   }
+  atualizado.pagamento = { ...(atualizado.pagamento || {}), valor_por_dia: vpd, valor_total: dias * vpd };
 
-  atualizado.pagamento = {
-    ...(atualizado.pagamento || {}),
-    valor_por_dia: valorPorDia,
-    dias,
-    valor_total: dias * valorPorDia,
-  };
-  atualizado.aluguel = {
-    ...(atualizado.aluguel || {}),
-    dias,
-    valor_total: dias * valorPorDia,
-  };
   // 2.6) Regerar HTML a partir do snapshot atualizado
   const html = (typeof generateContractHtml === 'function')
     ? generateContractHtml(atualizado)
@@ -213,23 +189,47 @@ exports.publicarContrato = async (req, res) => {
   const isOwner = req?.user?.role === 'proprietario' && req?.user?.id === c.proprietario_id;
   if (!isAdmin && !isOwner) return res.status(403).json({ error: 'Proibido' });
 
-  // Interpretar body (objeto ou string JSON) e filtrar somente aluguel.local_*
+  if (c.status !== 'em_negociacao') {
+    return res.status(409).json({ error: 'Contrato não pode ser publicado neste status' });
+  }
   const patch = coerceJsonObject(req.body?.dados_json ?? req.body);
   if (patch.__invalid_json__) return res.status(400).json({ error: 'dados_json inválido' });
   const toApply = pickPublishPatch(patch);
 
   // Merge no snapshot atual e salvar + status
   const atual = coerceJsonObject(c.dados_json);
-  const atualizado = deepMerge({}, atual, toApply);
+  const atualizado = {
+    ...atual,
+    aluguel: { ...(atual.aluguel || {}), ...(toApply.aluguel || {}) },
+    pagamento: { ...(atual.pagamento || {}), ...(toApply.pagamento || {}) },
+  };
+
+  const dias = daysDiffInclusive(
+    atualizado?.aluguel?.data_inicio ?? atualizado?.detalhes?.data_inicio,
+    atualizado?.aluguel?.data_fim ?? atualizado?.detalhes?.data_fim
+  );
+  if (dias === null) {
+    return res.status(422).json({ error: 'datas inválidas no contrato' });
+  }
+  atualizado.aluguel = { ...(atualizado.aluguel || {}), dias };
+
+  const vpd = Number(atualizado?.pagamento?.valor_por_dia ?? 0);
+  if (!Number.isFinite(vpd) || vpd <= 0) {
+    return res.status(422).json({ error: 'valor_por_dia inválido' });
+  }
+  atualizado.pagamento = { ...(atualizado.pagamento || {}), valor_por_dia: vpd, valor_total: dias * vpd };
+
+  const html = (typeof generateContractHtml === 'function')
+    ? generateContractHtml(atualizado)
+    : `<pre>${JSON.stringify(atualizado, null, 2)}</pre>`;
 
   await pool.query(
-    "UPDATE contratos SET dados_json=?, status='pronto_para_assinatura' WHERE id=?",
-    [JSON.stringify(atualizado), c.id]
+    "UPDATE contratos SET dados_json=?, arquivo_html=?, status='pronto_para_assinatura' WHERE id=?",
+    [JSON.stringify(atualizado), html, c.id]
   );
 
   return res.json({ ok: true, contrato_id: c.id });
 };
-
 exports.assinarContrato = async (req, res) => {
   const { id } = req.params;
   try {

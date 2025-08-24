@@ -1,7 +1,38 @@
 const pool = require('../config/db');
-const { buildContractSnapshot, generateContractHtml } = require('../utils/contractHtml');
+const { generateContractHtml } = require('../utils/contractHtml');
 const { assertProprietarioDoVeiculoOrAdmin } = require('../utils/ownership');
 
+function coerceJsonObject(input) {
+  if (input == null) return {};
+  if (typeof input === 'string') {
+    try { return JSON.parse(input); }
+    catch { return { __invalid_json__: true, __raw__: input }; }
+  }
+  if (typeof input === 'object') return input;
+  return {};
+}
+
+// parse seguro "YYYY-MM-DD" para Date UTC
+function parseYMDToUTC(d) {
+  if (!d) return null;
+  if (d instanceof Date) return d;
+  if (typeof d === 'string') {
+    const m = d.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    const y = Number(m[1]), mo = Number(m[2]) - 1, da = Number(m[3]);
+    return new Date(Date.UTC(y, mo, da));
+  }
+  return null;
+}
+
+// diferença em dias, inclusiva (mínimo 1)
+function daysDiffInclusive(di, df) {
+  const a = parseYMDToUTC(di), b = parseYMDToUTC(df);
+  if (!a || !b) return null;
+  const MS = 1000 * 60 * 60 * 24;
+  const diff = Math.round((b - a) / MS);
+  return diff > 0 ? diff : 1;
+}
 
 exports.criarSolicitacao = async (req, res) => {
   if (!req.user || req.user.role !== 'motorista') {
@@ -104,7 +135,10 @@ exports.aprovarSolicitacao = async (req, res) => {
   if (!valor_por_dia || !forma_pagamento || !local_retirada || !local_devolucao) {
     return res.status(400).json({ error: 'Campos obrigatórios' });
   }
-
+  const valorDiaNum = Number(valor_por_dia);
+  if (!Number.isFinite(valorDiaNum) || valorDiaNum <= 0) {
+    return res.status(422).json({ error: 'valor_por_dia inválido' });
+  }
   let connection;
   try {
     // 1) Busca a solicitação e valida ownership
@@ -121,7 +155,22 @@ exports.aprovarSolicitacao = async (req, res) => {
       admin: req.admin,
       veiculoId: sol.veiculo_id,
     });
+    const dias = daysDiffInclusive(sol.data_inicio, sol.data_fim);
+    if (dias === null) {
+      return res.status(422).json({ error: 'datas inválidas' });
+    }
 
+    const [[conf]] = await pool.query(
+      `SELECT COUNT(*) AS n
+         FROM alugueis a
+        WHERE a.veiculo_id = ?
+          AND a.status IN ('aprovado','pronto_para_assinatura','assinado','em_andamento')
+          AND NOT (a.data_fim_prevista < ? OR a.data_inicio > ?)` ,
+      [sol.veiculo_id, sol.data_inicio, sol.data_fim]
+    );
+    if (conf.n > 0) {
+      return res.status(409).json({ error: 'Conflito de agenda para o veículo no período solicitado' });
+    }
     // 2) Transação
     connection = await pool.getConnection();
     await connection.beginTransaction();
@@ -161,9 +210,9 @@ exports.aprovarSolicitacao = async (req, res) => {
     // 4) UPSERT + validação dura (422) — MOTORISTA
     // ********************************************
     const MOTORISTA_LEGAL_FIELDS = [
-      'rg','orgao_expeditor','uf_rg','nacionalidade','estado_civil','profissao',
-      'endereco_logradouro','endereco_numero','endereco_bairro',
-      'endereco_cidade','endereco_uf','endereco_cep'
+      'rg', 'orgao_expeditor', 'uf_rg', 'nacionalidade', 'estado_civil', 'profissao',
+      'endereco_logradouro', 'endereco_numero', 'endereco_bairro',
+      'endereco_cidade', 'endereco_uf', 'endereco_cep'
     ];
 
     // aceita dados em req.body.dados_legais (ou req.body.detalhes por compat)
@@ -209,9 +258,9 @@ exports.aprovarSolicitacao = async (req, res) => {
     // 5) UPSERT + validação dura (422) — PROPRIETÁRIO
     // ***************************************
     const PROPRIETARIO_LEGAL_FIELDS = [
-      'rg','orgao_expeditor','uf_rg','nacionalidade','estado_civil','profissao',
-      'endereco_logradouro','endereco_numero','endereco_bairro',
-      'endereco_cidade','endereco_uf','endereco_cep'
+      'rg', 'orgao_expeditor', 'uf_rg', 'nacionalidade', 'estado_civil', 'profissao',
+      'endereco_logradouro', 'endereco_numero', 'endereco_bairro',
+      'endereco_cidade', 'endereco_uf', 'endereco_cep'
     ];
 
     // aceita em req.body.dados_legais_proprietario (ou proprietario_dados_legais)
@@ -300,7 +349,7 @@ exports.aprovarSolicitacao = async (req, res) => {
     // 7) Detalhes da negociação (não viram colunas)
     // ********************************************
     const detalhesContrato = {
-      valor_por_dia,
+      valor_por_dia: valorDiaNum,
       forma_pagamento: String(forma_pagamento),
       local_retirada: String(local_retirada),
       local_devolucao: String(local_devolucao),
@@ -308,30 +357,31 @@ exports.aprovarSolicitacao = async (req, res) => {
       data_fim: sol.data_fim,
     };
 
-    // ********************************************
-    // 8) Snapshot + HTML
-    // ********************************************
-    let snapshot;
-    if (typeof buildContractSnapshot === 'function') {
-      snapshot = buildContractSnapshot({
-        solicitacao: sol,
-        aluguel: { id: aluguelId },
-        veiculo,
-        proprietario,
-        motorista,
-        detalhes: detalhesContrato,
-      });
-    } else {
-      snapshot = {
-        solicitacao: sol,
-        aluguel: { id: aluguelId },
-        veiculo,
-        proprietario,
-        motorista,
-        detalhes: detalhesContrato,
-        gerado_em: new Date().toISOString()
-      };
-    }
+    const aluguelSnap = {
+      id: aluguelId,
+      data_inicio: sol.data_inicio,
+      data_fim: sol.data_fim,
+      dias,
+      local_retirada: String(local_retirada),
+      local_devolucao: String(local_devolucao),
+    };
+
+    const pagamentoSnap = {
+      valor_por_dia: valorDiaNum,
+      valor_total: dias * valorDiaNum,
+    };
+
+    const snapshot = {
+      solicitacao: sol,
+      aluguel: aluguelSnap,
+      veiculo,
+      proprietario,
+      locador: proprietario,
+      motorista,
+      pagamento: pagamentoSnap,
+      detalhes: detalhesContrato,
+      gerado_em: new Date().toISOString(),
+    };
 
     const html = (typeof generateContractHtml === 'function')
       ? generateContractHtml(snapshot)
