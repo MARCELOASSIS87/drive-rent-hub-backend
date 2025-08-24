@@ -197,8 +197,14 @@ describe('Fluxo de Contratos (editar → publicar → assinar)', () => {
       .put(`/contratos/${contratoId}`)
       .set('Authorization', `Bearer ${tokenProp}`)
       .send({
+        aluguel: {
+          local_retirada: 'Ponto A',
+          local_devolucao: 'Ponto B',
+          data_fim: fim2Iso        // usa a data +2 dias que você já calculou
+        },
         pagamento: { valor_por_dia: 150 }
       });
+
 
     // DIAGNÓSTICO
     if (![200, 201, 204].includes(edit.statusCode)) {

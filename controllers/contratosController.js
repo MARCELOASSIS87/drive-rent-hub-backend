@@ -127,16 +127,63 @@ exports.atualizarContrato = async (req, res) => {
   if (patch.__invalid_json__) {
     return res.status(400).json({ error: 'dados_json inválido' });
   }
+  // DEBUG (testes): ver o que chegou no PUT
+  if (process.env.NODE_ENV === 'test') {
+    try {
+      console.log('[PUT CONTRATO DEBUG] req.body =', JSON.stringify(req.body));
+      console.log('[PUT CONTRATO DEBUG] patch     =', JSON.stringify(patch));
+    } catch { }
+  }
 
   // 2.4) Deep-merge no snapshot atual
   const atual = coerceJsonObject(contratoRow.dados_json);
   const atualizado = { ...atual };
+  // >>> INÍCIO PATCH: normalizar locais vindos do body (root | aluguel | detalhes)
+  const bodyLocalRetirada =
+    (patch?.aluguel?.local_retirada ?? patch?.detalhes?.local_retirada ?? patch?.local_retirada);
+  const bodyLocalDevolucao =
+    (patch?.aluguel?.local_devolucao ?? patch?.detalhes?.local_devolucao ?? patch?.local_devolucao);
+
+  if (bodyLocalRetirada != null || bodyLocalDevolucao != null) {
+    atualizado.aluguel = { ...(atualizado.aluguel || {}) };
+    atualizado.detalhes = { ...(atualizado.detalhes || {}) };
+
+    if (bodyLocalRetirada != null) {
+      const v = String(bodyLocalRetirada);
+      atualizado.aluguel.local_retirada = v;
+      atualizado.detalhes.local_retirada = v;
+    }
+    if (bodyLocalDevolucao != null) {
+      const v = String(bodyLocalDevolucao);
+      atualizado.aluguel.local_devolucao = v;
+      atualizado.detalhes.local_devolucao = v;
+    }
+  }
+  // >>> FIM PATCH
 
   if (patch.aluguel && typeof patch.aluguel === 'object') {
-    atualizado.aluguel = { ...(atual.aluguel || {}) };
-    if (patch.aluguel.local_retirada != null) atualizado.aluguel.local_retirada = String(patch.aluguel.local_retirada);
-    if (patch.aluguel.local_devolucao != null) atualizado.aluguel.local_devolucao = String(patch.aluguel.local_devolucao);
+    // base: snapshot atual
+    atualizado.aluguel = { ...(atualizado.aluguel || atual.aluguel || {}) };
+
+    // locais
+    if (patch.aluguel.local_retirada != null) {
+      atualizado.aluguel.local_retirada = String(patch.aluguel.local_retirada);
+    }
+    if (patch.aluguel.local_devolucao != null) {
+      atualizado.aluguel.local_devolucao = String(patch.aluguel.local_devolucao);
+    }
+
+    // ★ datas (o teste envia aluguel.data_fim como ISO: '2025-08-26T00:00:00.000Z')
+    if (patch.aluguel.data_inicio != null) {
+      const ymd = toYMD(patch.aluguel.data_inicio);
+      if (ymd) atualizado.aluguel.data_inicio = ymd;
+    }
+    if (patch.aluguel.data_fim != null) {
+      const ymd = toYMD(patch.aluguel.data_fim);
+      if (ymd) atualizado.aluguel.data_fim = ymd;
+    }
   }
+
   if (patch.pagamento && typeof patch.pagamento === 'object') {
     atualizado.pagamento = { ...(atual.pagamento || {}) };
     if (patch.pagamento.valor_por_dia != null) {
@@ -162,9 +209,10 @@ exports.atualizarContrato = async (req, res) => {
     return res.status(422).json({ error: 'valor_por_dia inválido' });
   }
 
-  atualizado.pagamento = { ...(atualizado.pagamento || {}), valor_por_dia: vpd, valor_total: dias * vpd };
+  atualizado.pagamento = { ...(atualizado.pagamento || {}), valor_por_dia: vpd, valor_total: dias * vpd }; atualizado.pagamento = { ...(atualizado.pagamento || {}), valor_por_dia: vpd, valor_total: dias * vpd };
+  // espelhar também no aluguel, pois o teste espera dados.aluguel.valor_total
+  atualizado.aluguel = { ...(atualizado.aluguel || {}), valor_total: dias * vpd };
 
-  atualizado.pagamento = { ...(atualizado.pagamento || {}), valor_por_dia: vpd, valor_total: dias * vpd };
 
   // === garantir proprietario/motorista no snapshot para o template não quebrar ===
   try {
@@ -206,12 +254,29 @@ exports.atualizarContrato = async (req, res) => {
   if (!html) {
     html = `<pre>${JSON.stringify(atualizado, null, 2)}</pre>`;
   }
+  // DEBUG (testes): ver o que vamos salvar
+  if (process.env.NODE_ENV === 'test') {
+    try {
+      console.log('[PUT CONTRATO DEBUG] vai salvar aluguel =', JSON.stringify(atualizado.aluguel));
+    } catch { }
+  }
 
   await pool.query(
     'UPDATE contratos SET dados_json=?, arquivo_html=? WHERE id=?',
     [JSON.stringify(atualizado), html, contratoRow.id]
   );
 
+  // DEBUG (testes): ler de volta o que ficou salvo
+  if (process.env.NODE_ENV === 'test') {
+    try {
+      const [[rowAfter]] = await pool.query('SELECT dados_json FROM contratos WHERE id=?', [contratoRow.id]);
+      let dj = rowAfter?.dados_json;
+      if (typeof dj === 'string') { try { dj = JSON.parse(dj); } catch { } }
+      console.log('[PUT CONTRATO DEBUG] persistido aluguel =', JSON.stringify(dj?.aluguel));
+    } catch (e) {
+      console.log('[PUT CONTRATO DEBUG] erro lendo de volta:', e?.message);
+    }
+  }
 
   return res.status(200).json({ ok: true, contrato_id: contratoRow.id });
 };
@@ -254,6 +319,12 @@ exports.publicarContrato = async (req, res) => {
     try { return JSON.parse(c.dados_json); } catch { return {}; }
   })();
   const atualiza = { ...atual };
+  // DEBUG INÍCIO – só em teste
+  if (process.env.NODE_ENV === 'test') {
+    try {
+      console.log('[PUBLICAR DEBUG] req.body =', JSON.stringify(patch));
+    } catch { }
+  }
 
   // 0) NORMALIZAÇÃO DE LOCAIS DO BODY (todas as formas)
   // Aceita root, aluguel, detalhes, snake_case e camelCase
@@ -403,6 +474,12 @@ exports.publicarContrato = async (req, res) => {
   if (patch.detalhes?.local_devolucao != null) {
     atualiza.aluguel.local_devolucao = String(patch.detalhes.local_devolucao);
   }
+  // DEBUG ANTES DE SALVAR – só em teste
+  if (process.env.NODE_ENV === 'test') {
+    try {
+      console.log('[PUBLICAR DEBUG] vai salvar aluguel =', JSON.stringify(atualiza.aluguel));
+    } catch { }
+  }
 
   // 9) Persistir publicação
   await pool.query(
@@ -411,6 +488,17 @@ exports.publicarContrato = async (req, res) => {
       WHERE id = ?`,
     [JSON.stringify(atualiza), id]
   );
+  // DEBUG APÓS SALVAR – ler de volta
+  if (process.env.NODE_ENV === 'test') {
+    try {
+      const [[row]] = await pool.query('SELECT dados_json FROM contratos WHERE id=?', [id]);
+      let dj = row?.dados_json;
+      if (typeof dj === 'string') { try { dj = JSON.parse(dj); } catch { } }
+      console.log('[PUBLICAR DEBUG] persistido aluguel =', JSON.stringify(dj?.aluguel));
+    } catch (e) {
+      console.log('[PUBLICAR DEBUG] erro lendo de volta:', e?.message);
+    }
+  }
 
   return res.json({ ok: true, contrato_id: Number(id) });
 };
