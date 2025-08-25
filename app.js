@@ -25,5 +25,7 @@ app.use('/solicitacoes', rentalRequestsRoutes);
 const contratosRoutes = require('./routes/contratosRoutes');
 app.use('/contratos', contratosRoutes); // novo caminho
 app.use('/admin/contratos', contratosRoutes); // manter compat
+const notificacoesRoutes = require('./routes/notificacoes');
+app.use('/notificacoes', notificacoesRoutes);
 // (no futuro: outras rotas)
 module.exports = app;
