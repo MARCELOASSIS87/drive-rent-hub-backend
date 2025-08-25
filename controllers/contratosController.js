@@ -38,6 +38,112 @@ function toYMD(d) {
   const da = String(dt.getUTCDate()).padStart(2, '0');
   return `${y}-${m}-${da}`;
 }
+function compactObject(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== null && v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+async function buildContratoSnapshot(contratoId) {
+  const [[basic]] = await pool.query(
+    'SELECT motorista_id, veiculo_id FROM contratos WHERE id = ?',
+    [contratoId]
+  );
+  if (!basic) return { partes: {}, veiculo: {} };
+
+  const [[m]] = await pool.query(
+    `SELECT m.id, m.nome, m.email, m.telefone, m.cpf,
+            ml.cnh_numero, ml.cnh_categoria, ml.cnh_validade, ml.cnh_data_emissao,
+            ml.rg, ml.orgao_expeditor, ml.uf_rg, ml.nacionalidade, ml.estado_civil, ml.profissao,
+            ml.endereco_logradouro, ml.endereco_numero, ml.endereco_bairro,
+            ml.endereco_cidade, ml.endereco_uf, ml.endereco_cep
+       FROM motoristas m
+  LEFT JOIN motoristas_legal ml ON ml.motorista_id = m.id
+      WHERE m.id = ?`,
+    [basic.motorista_id]
+  );
+
+  const [[v]] = await pool.query(
+    `SELECT id, marca, modelo, ano, cor, placa, renavam, numero_seguro, proprietario_id
+       FROM veiculos WHERE id = ?`,
+    [basic.veiculo_id]
+  );
+
+  let p;
+  if (v) {
+    [[p]] = await pool.query(
+      `SELECT p.id, p.nome, p.email, p.telefone, p.cpf_cnpj,
+              pl.rg, pl.orgao_expeditor, pl.uf_rg, pl.nacionalidade, pl.estado_civil, pl.profissao,
+              pl.endereco_logradouro, pl.endereco_numero, pl.endereco_bairro,
+              pl.endereco_cidade, pl.endereco_uf, pl.endereco_cep
+         FROM proprietarios p
+    LEFT JOIN proprietarios_legal pl ON pl.proprietario_id = p.id
+        WHERE p.id = ?`,
+      [v.proprietario_id]
+    );
+  }
+
+  const motorista = compactObject({
+    id: m?.id,
+    nome: m?.nome,
+    email: m?.email,
+    telefone: m?.telefone,
+    cpf: m?.cpf,
+    cnh_numero: m?.cnh_numero,
+    cnh_categoria: m?.cnh_categoria,
+    cnh_validade: toYMD(m?.cnh_validade),
+    cnh_data_emissao: toYMD(m?.cnh_data_emissao),
+    rg: m?.rg,
+    orgao_expeditor: m?.orgao_expeditor,
+    uf_rg: m?.uf_rg,
+    nacionalidade: m?.nacionalidade,
+    estado_civil: m?.estado_civil,
+    profissao: m?.profissao,
+    endereco_logradouro: m?.endereco_logradouro,
+    endereco_numero: m?.endereco_numero,
+    endereco_bairro: m?.endereco_bairro,
+    endereco_cidade: m?.endereco_cidade,
+    endereco_uf: m?.endereco_uf,
+    endereco_cep: m?.endereco_cep,
+  });
+
+  const proprietario = compactObject({
+    id: p?.id,
+    nome: p?.nome,
+    email: p?.email,
+    telefone: p?.telefone,
+    cpf_cnpj: p?.cpf_cnpj,
+    rg: p?.rg,
+    orgao_expeditor: p?.orgao_expeditor,
+    uf_rg: p?.uf_rg,
+    nacionalidade: p?.nacionalidade,
+    estado_civil: p?.estado_civil,
+    profissao: p?.profissao,
+    endereco_logradouro: p?.endereco_logradouro,
+    endereco_numero: p?.endereco_numero,
+    endereco_bairro: p?.endereco_bairro,
+    endereco_cidade: p?.endereco_cidade,
+    endereco_uf: p?.endereco_uf,
+    endereco_cep: p?.endereco_cep,
+  });
+
+  const veiculo = compactObject({
+    id: v?.id,
+    marca: v?.marca,
+    modelo: v?.modelo,
+    ano: v?.ano,
+    cor: v?.cor,
+    placa: v?.placa,
+    renavam: v?.renavam,
+    numero_seguro: v?.numero_seguro,
+  });
+
+  return { partes: { motorista, proprietario }, veiculo };
+}
+
 async function canAccessContrato({ contrato, user, admin }) {
   // padroniza: admin é boolean
   const isAdmin = (admin === true) || (user?.role === 'admin');
@@ -498,7 +604,20 @@ exports.publicarContrato = async (req, res) => {
       console.log('[PUBLICAR DEBUG] vai salvar aluguel =', JSON.stringify(atualiza.aluguel));
     } catch { }
   }
-
+  if (
+    !atualiza.partes?.motorista ||
+    !atualiza.partes?.proprietario ||
+    !atualiza.veiculo ||
+    !Object.keys(atualiza.veiculo).length
+  ) {
+    const snap = await buildContratoSnapshot(id);
+    atualiza.partes = atualiza.partes || {};
+    if (!atualiza.partes.motorista) atualiza.partes.motorista = snap.partes.motorista;
+    if (!atualiza.partes.proprietario) atualiza.partes.proprietario = snap.partes.proprietario;
+    if (!atualiza.veiculo || !Object.keys(atualiza.veiculo).length) {
+      atualiza.veiculo = snap.veiculo;
+    }
+  }
   // 9) Persistir publicação
   await pool.query(
     `UPDATE contratos
@@ -538,6 +657,22 @@ exports.assinarContrato = async (req, res) => {
     }
     if (!['pronto_para_assinatura', 'em_negociacao'].includes(contrato.status)) {
       return res.status(409).json({ error: 'Status inválido' });
+    }
+    const atual = coerceJsonObject(contrato.dados_json);
+    if (
+      !atual.partes?.motorista ||
+      !atual.partes?.proprietario ||
+      !atual.veiculo ||
+      !Object.keys(atual.veiculo).length
+    ) {
+      const snap = await buildContratoSnapshot(id);
+      atual.partes = atual.partes || {};
+      if (!atual.partes.motorista) atual.partes.motorista = snap.partes.motorista;
+      if (!atual.partes.proprietario) atual.partes.proprietario = snap.partes.proprietario;
+      if (!atual.veiculo || !Object.keys(atual.veiculo).length) {
+        atual.veiculo = snap.veiculo;
+      }
+      await pool.query('UPDATE contratos SET dados_json = ? WHERE id = ?', [JSON.stringify(atual), id]);
     }
     await pool.query(
       'UPDATE contratos SET status="assinado", assinatura_data=NOW(), assinatura_ip=? WHERE id=?',
