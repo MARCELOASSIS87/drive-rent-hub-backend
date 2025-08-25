@@ -36,16 +36,14 @@ describe('Cadastro de Motorista (POST /motoristas)', () => {
 
   it('deve cadastrar motorista e gravar senha como hash, status em_analise', async () => {
     const email = `mot_${Date.now()}@teste.com`;
-    const body = {
-      nome: 'Motorista Teste',
-      email,
-      telefone: '31988887777',
-      cpf: '12345678901',
-      cnh_categoria: 'B',
-      senha: '123456'
-    };
-
-    const res = await request(app).post('/motoristas').send(body);
+    const res = await request(app)
+      .post('/motoristas')
+      .field('nome', 'Motorista Teste')
+      .field('email', email)
+      .field('telefone', '31988887777')
+      .field('cpf', '12345678901')
+      .field('cnh_categoria', 'B')
+      .field('senha', '123456'); // multipart/form-data sem arquivos
     expect(res.statusCode).toBe(201);
     expect(res.body).toHaveProperty('id');
 
@@ -57,12 +55,12 @@ describe('Cadastro de Motorista (POST /motoristas)', () => {
   });
 
   it('deve rejeitar payload inválido (ex: sem senha)', async () => {
-    const res = await request(app).post('/motoristas').send({
-      nome: 'Sem Senha',
-      email: `no_pass_${Date.now()}@teste.com`,
-      cpf: '12345678901',
-      cnh_categoria: 'B'
-    });
+    const res = await request(app)
+      .post('/motoristas')
+      .field('nome', 'Sem Senha')
+      .field('email', `no_pass_${Date.now()}@teste.com`)
+      .field('cpf', '12345678901')
+      .field('cnh_categoria', 'B'); // sem senha
     expect([400, 422, 500]).toContain(res.statusCode); // 500 se o controller não validar, OK para este smoke
   });
 });

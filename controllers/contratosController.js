@@ -46,99 +46,148 @@ function compactObject(obj) {
   }
   return out;
 }
+function dateStr(d) {
+  if (!d) return undefined;
+  // suporta Date e string compatível
+  try {
+    const iso = new Date(d).toISOString().slice(0, 10);
+    return iso;
+  } catch {
+    return undefined;
+  }
+}
 
 async function buildContratoSnapshot(contratoId) {
-  const [[basic]] = await pool.query(
+  // 1) ids básicos do contrato
+  const [[c]] = await pool.query(
     'SELECT motorista_id, veiculo_id FROM contratos WHERE id = ?',
     [contratoId]
   );
-  if (!basic) return { partes: {}, veiculo: {} };
+  if (!c) throw new Error('Contrato não encontrado para snapshot');
 
-  const [[m]] = await pool.query(
-    `SELECT m.id, m.nome, m.email, m.telefone, m.cpf,
-            ml.cnh_numero, ml.cnh_categoria, ml.cnh_validade, ml.cnh_data_emissao,
-            ml.rg, ml.orgao_expeditor, ml.uf_rg, ml.nacionalidade, ml.estado_civil, ml.profissao,
-            ml.endereco_logradouro, ml.endereco_numero, ml.endereco_bairro,
-            ml.endereco_cidade, ml.endereco_uf, ml.endereco_cep
-       FROM motoristas m
-  LEFT JOIN motoristas_legal ml ON ml.motorista_id = m.id
-      WHERE m.id = ?`,
-    [basic.motorista_id]
+  // 2) motorista + legais (CNH vem de motoristas; "legais" vem de motoristas_legal)
+  const [[mrow]] = await pool.query(
+    `SELECT
+       m.id                 AS m_id,
+       m.nome               AS m_nome,
+       m.email              AS m_email,
+       m.telefone           AS m_telefone,
+       m.cpf                AS m_cpf,
+       m.cnh_numero         AS m_cnh_numero,
+       m.cnh_categoria      AS m_cnh_categoria,
+       m.cnh_validade       AS m_cnh_validade,
+       m.cnh_data_emissao   AS m_cnh_data_emissao,
+       ml.rg                AS ml_rg,
+       ml.orgao_expeditor   AS ml_orgao_expeditor,
+       ml.uf_rg             AS ml_uf_rg,
+       ml.nacionalidade     AS ml_nacionalidade,
+       ml.estado_civil      AS ml_estado_civil,
+       ml.profissao         AS ml_profissao,
+       ml.endereco_logradouro AS ml_end_logradouro,
+       ml.endereco_numero     AS ml_end_numero,
+       ml.endereco_bairro     AS ml_end_bairro,
+       ml.endereco_cidade     AS ml_end_cidade,
+       ml.endereco_uf         AS ml_end_uf,
+       ml.endereco_cep        AS ml_end_cep
+     FROM motoristas m
+     LEFT JOIN motoristas_legal ml ON ml.motorista_id = m.id
+     WHERE m.id = ?`,
+    [c.motorista_id]
   );
 
-  const [[v]] = await pool.query(
+  // 3) veículo (para obter proprietario_id)
+  const [[vrow]] = await pool.query(
     `SELECT id, marca, modelo, ano, cor, placa, renavam, numero_seguro, proprietario_id
-       FROM veiculos WHERE id = ?`,
-    [basic.veiculo_id]
+       FROM veiculos
+      WHERE id = ?`,
+    [c.veiculo_id]
+  );
+  if (!vrow) throw new Error('Veículo não encontrado para snapshot');
+
+  // 4) proprietário + legais
+  const [[prow]] = await pool.query(
+    `SELECT
+       p.id               AS p_id,
+       p.nome             AS p_nome,
+       p.email            AS p_email,
+       p.telefone         AS p_telefone,
+       p.cpf_cnpj         AS p_cpf_cnpj,
+       pl.rg              AS pl_rg,
+       pl.orgao_expeditor AS pl_orgao_expeditor,
+       pl.uf_rg           AS pl_uf_rg,
+       pl.nacionalidade   AS pl_nacionalidade,
+       pl.estado_civil    AS pl_estado_civil,
+       pl.profissao       AS pl_profissao,
+       pl.endereco_logradouro AS pl_end_logradouro,
+       pl.endereco_numero     AS pl_end_numero,
+       pl.endereco_bairro     AS pl_end_bairro,
+       pl.endereco_cidade     AS pl_end_cidade,
+       pl.endereco_uf         AS pl_end_uf,
+       pl.endereco_cep        AS pl_end_cep
+     FROM proprietarios p
+     LEFT JOIN proprietarios_legal pl ON pl.proprietario_id = p.id
+     WHERE p.id = ?`,
+    [vrow.proprietario_id]
   );
 
-  let p;
-  if (v) {
-    [[p]] = await pool.query(
-      `SELECT p.id, p.nome, p.email, p.telefone, p.cpf_cnpj,
-              pl.rg, pl.orgao_expeditor, pl.uf_rg, pl.nacionalidade, pl.estado_civil, pl.profissao,
-              pl.endereco_logradouro, pl.endereco_numero, pl.endereco_bairro,
-              pl.endereco_cidade, pl.endereco_uf, pl.endereco_cep
-         FROM proprietarios p
-    LEFT JOIN proprietarios_legal pl ON pl.proprietario_id = p.id
-        WHERE p.id = ?`,
-      [v.proprietario_id]
-    );
-  }
-
+  // 5) montar objetos (removendo null/undefined)
   const motorista = compactObject({
-    id: m?.id,
-    nome: m?.nome,
-    email: m?.email,
-    telefone: m?.telefone,
-    cpf: m?.cpf,
-    cnh_numero: m?.cnh_numero,
-    cnh_categoria: m?.cnh_categoria,
-    cnh_validade: toYMD(m?.cnh_validade),
-    cnh_data_emissao: toYMD(m?.cnh_data_emissao),
-    rg: m?.rg,
-    orgao_expeditor: m?.orgao_expeditor,
-    uf_rg: m?.uf_rg,
-    nacionalidade: m?.nacionalidade,
-    estado_civil: m?.estado_civil,
-    profissao: m?.profissao,
-    endereco_logradouro: m?.endereco_logradouro,
-    endereco_numero: m?.endereco_numero,
-    endereco_bairro: m?.endereco_bairro,
-    endereco_cidade: m?.endereco_cidade,
-    endereco_uf: m?.endereco_uf,
-    endereco_cep: m?.endereco_cep,
+    id: mrow?.m_id,
+    nome: mrow?.m_nome,
+    email: mrow?.m_email,
+    telefone: mrow?.m_telefone,
+    cpf: mrow?.m_cpf,
+    cnh_numero: mrow?.m_cnh_numero,
+    cnh_categoria: mrow?.m_cnh_categoria,
+    cnh_validade: dateStr(mrow?.m_cnh_validade),
+    cnh_data_emissao: dateStr(mrow?.m_cnh_data_emissao),
+    legais: compactObject({
+      rg: mrow?.ml_rg,
+      orgao_expeditor: mrow?.ml_orgao_expeditor,
+      uf_rg: mrow?.ml_uf_rg,
+      nacionalidade: mrow?.ml_nacionalidade,
+      estado_civil: mrow?.ml_estado_civil,
+      profissao: mrow?.ml_profissao,
+      endereco_logradouro: mrow?.ml_end_logradouro,
+      endereco_numero: mrow?.ml_end_numero,
+      endereco_bairro: mrow?.ml_end_bairro,
+      endereco_cidade: mrow?.ml_end_cidade,
+      endereco_uf: mrow?.ml_end_uf,
+      endereco_cep: mrow?.ml_end_cep
+    })
   });
 
   const proprietario = compactObject({
-    id: p?.id,
-    nome: p?.nome,
-    email: p?.email,
-    telefone: p?.telefone,
-    cpf_cnpj: p?.cpf_cnpj,
-    rg: p?.rg,
-    orgao_expeditor: p?.orgao_expeditor,
-    uf_rg: p?.uf_rg,
-    nacionalidade: p?.nacionalidade,
-    estado_civil: p?.estado_civil,
-    profissao: p?.profissao,
-    endereco_logradouro: p?.endereco_logradouro,
-    endereco_numero: p?.endereco_numero,
-    endereco_bairro: p?.endereco_bairro,
-    endereco_cidade: p?.endereco_cidade,
-    endereco_uf: p?.endereco_uf,
-    endereco_cep: p?.endereco_cep,
+    id: prow?.p_id,
+    nome: prow?.p_nome,
+    email: prow?.p_email,
+    telefone: prow?.p_telefone,
+    cpf_cnpj: prow?.p_cpf_cnpj,
+    legais: compactObject({
+      rg: prow?.pl_rg,
+      orgao_expeditor: prow?.pl_orgao_expeditor,
+      uf_rg: prow?.pl_uf_rg,
+      nacionalidade: prow?.pl_nacionalidade,
+      estado_civil: prow?.pl_estado_civil,
+      profissao: prow?.pl_profissao,
+      endereco_logradouro: prow?.pl_end_logradouro,
+      endereco_numero: prow?.pl_end_numero,
+      endereco_bairro: prow?.pl_end_bairro,
+      endereco_cidade: prow?.pl_end_cidade,
+      endereco_uf: prow?.pl_end_uf,
+      endereco_cep: prow?.pl_end_cep
+    })
   });
 
   const veiculo = compactObject({
-    id: v?.id,
-    marca: v?.marca,
-    modelo: v?.modelo,
-    ano: v?.ano,
-    cor: v?.cor,
-    placa: v?.placa,
-    renavam: v?.renavam,
-    numero_seguro: v?.numero_seguro,
+    id: vrow?.id,
+    marca: vrow?.marca,
+    modelo: vrow?.modelo,
+    ano: vrow?.ano,
+    cor: vrow?.cor,
+    placa: vrow?.placa,
+    renavam: vrow?.renavam,
+    numero_seguro: vrow?.numero_seguro
   });
 
   return { partes: { motorista, proprietario }, veiculo };
@@ -222,7 +271,6 @@ exports.atualizarContrato = async (req, res) => {
     return res.status(404).json({ error: 'Contrato não encontrado' });
   }
   // curto-circuito: só o dono do veículo (ou admin) pode editar
-  // curto-circuito: só o dono do veículo (ou admin) pode editar
   const isAdmin = req.user?.role === 'admin';
   if (!isAdmin) {
     if (!req.user || req.user.role !== 'proprietario' || req.user.id !== contratoRow.proprietario_id) {
@@ -239,7 +287,6 @@ exports.atualizarContrato = async (req, res) => {
   } catch (e) {
     return res.status(e.status || 403).json({ error: e.message || 'Proibido' });
   }
-
 
 
   if (contratoRow.status !== 'em_negociacao') {
@@ -610,28 +657,44 @@ exports.publicarContrato = async (req, res) => {
     !atualiza.veiculo ||
     !Object.keys(atualiza.veiculo).length
   ) {
-    const snap = await buildContratoSnapshot(id);
-    atualiza.partes = atualiza.partes || {};
-    if (!atualiza.partes.motorista) atualiza.partes.motorista = snap.partes.motorista;
-    if (!atualiza.partes.proprietario) atualiza.partes.proprietario = snap.partes.proprietario;
-    if (!atualiza.veiculo || !Object.keys(atualiza.veiculo).length) {
-      atualiza.veiculo = snap.veiculo;
+    try {
+      const snap = await buildContratoSnapshot(id);
+      atualiza.partes = atualiza.partes || {};
+      if (!atualiza.partes.motorista) atualiza.partes.motorista = snap.partes.motorista;
+      if (!atualiza.partes.proprietario) atualiza.partes.proprietario = snap.partes.proprietario;
+      if (!atualiza.veiculo || !Object.keys(atualiza.veiculo).length) {
+        atualiza.veiculo = snap.veiculo;
+      }
+    } catch (err) {
+      console.error('[PUBLICAR ERRO SNAPSHOT]', {
+        code: err.code, errno: err.errno, sqlState: err.sqlState, sqlMessage: err.sqlMessage, message: err.message
+      });
+      return res.status(500).json({ ok: false, error: 'snapshot_error', details: err.sqlMessage || err.message });
     }
   }
-  // 9) Persistir publicação
-  await pool.query(
-    `UPDATE contratos
-        SET dados_json = ?, status = 'pronto_para_assinatura'
-      WHERE id = ?`,
-    [JSON.stringify(atualiza), id]
-  );
-  await pool.query(
-    `UPDATE contratos
-        SET visto_por_motorista = 0,
-            visto_por_proprietario = 1
-      WHERE id = ?`,
-    [id]
-  );
+  // 9) Persistir publicação (com diagnóstico de erro)
+  try {
+    await pool.query(
+      `UPDATE contratos
+          SET dados_json = ?, status = 'pronto_para_assinatura'
+        WHERE id = ?`,
+      [JSON.stringify(atualiza), id]
+    );
+    await pool.query(
+      `UPDATE contratos
+          SET visto_por_motorista = 0,
+              visto_por_proprietario = 1
+        WHERE id = ?`,
+      [id]
+    );
+  } catch (err) {
+    // Log completo para diagnosticar 500 da main
+    console.error(
+      '[PUBLICAR ERRO]',
+      { code: err.code, errno: err.errno, sqlState: err.sqlState, sqlMessage: err.sqlMessage }
+    );
+    return res.status(500).json({ ok: false, error: 'db_error', details: err.sqlMessage || err.message });
+  }
   // DEBUG APÓS SALVAR – ler de volta
   if (process.env.NODE_ENV === 'test') {
     try {
@@ -665,14 +728,21 @@ exports.assinarContrato = async (req, res) => {
       !atual.veiculo ||
       !Object.keys(atual.veiculo).length
     ) {
-      const snap = await buildContratoSnapshot(id);
-      atual.partes = atual.partes || {};
-      if (!atual.partes.motorista) atual.partes.motorista = snap.partes.motorista;
-      if (!atual.partes.proprietario) atual.partes.proprietario = snap.partes.proprietario;
-      if (!atual.veiculo || !Object.keys(atual.veiculo).length) {
-        atual.veiculo = snap.veiculo;
+      try {
+        const snap = await buildContratoSnapshot(id);
+        atual.partes = atual.partes || {};
+        if (!atual.partes.motorista) atual.partes.motorista = snap.partes.motorista;
+        if (!atual.partes.proprietario) atual.partes.proprietario = snap.partes.proprietario;
+        if (!atual.veiculo || !Object.keys(atual.veiculo).length) {
+          atual.veiculo = snap.veiculo;
+        }
+        await pool.query('UPDATE contratos SET dados_json = ? WHERE id = ?', [JSON.stringify(atual), id]);
+      } catch (err) {
+        console.error('[ASSINAR ERRO SNAPSHOT]', {
+          code: err.code, errno: err.errno, sqlState: err.sqlState, sqlMessage: err.sqlMessage, message: err.message
+        });
+        return res.status(500).json({ ok: false, error: 'snapshot_error', details: err.sqlMessage || err.message });
       }
-      await pool.query('UPDATE contratos SET dados_json = ? WHERE id = ?', [JSON.stringify(atual), id]);
     }
     await pool.query(
       'UPDATE contratos SET status="assinado", assinatura_data=NOW(), assinatura_ip=? WHERE id=?',
