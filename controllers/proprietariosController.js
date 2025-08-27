@@ -15,7 +15,7 @@ const criarProprietario = async (req, res) => {
 
     const [result] = await pool.query(
       `INSERT INTO proprietarios (nome, email, telefone, cpf_cnpj, senha_hash, status)
-       VALUES (?, ?, ?, ?, ?, 'pendente')`,
+       VALUES (?, ?, ?, ?, ?, 'aprovado')`,
       [nome, email, telefone, cpf_cnpj, senha_hash]
     );
 
