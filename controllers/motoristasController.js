@@ -28,6 +28,19 @@ exports.criarMotorista = async (req, res) => {
     const documento_vinculo_url = req.files?.documento_vinculo ? `/uploads/motoristas/${req.files.documento_vinculo[0].filename}` : null;
     const antecedentes_criminais_url = req.files?.antecedentes_criminais ? `/uploads/motoristas/${req.files.antecedentes_criminais[0].filename}` : null;
     const senha_hash = await bcrypt.hash(senhaEntrada, 10);
+    // normaliza e-mail
+    const emailNorm = String(email).trim().toLowerCase();
+
+    // impede e-mail já usado por PROPRIETÁRIO
+    const [rowsOwner] = await pool.query(
+      "SELECT id FROM proprietarios WHERE email = ? LIMIT 1",
+      [emailNorm]
+    );
+    if (rowsOwner.length) {
+      return res.status(409).json({
+        error: "E-mail já cadastrado como proprietário. Use outro e-mail."
+      });
+    }
 
     const [result] = await pool.query(
       `INSERT INTO motoristas (
@@ -41,7 +54,7 @@ exports.criarMotorista = async (req, res) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'em_analise')`,
       [
         nome,
-        email,
+        emailNorm,
         telefone,
         cpf,
         data_nascimento,
@@ -58,8 +71,6 @@ exports.criarMotorista = async (req, res) => {
         antecedentes_criminais_url
       ]
     );
-
-
     res.status(201).json({ id: result.insertId });
   } catch (err) {
     if (err && err.code === 'ER_DUP_ENTRY') {
