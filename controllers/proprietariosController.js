@@ -11,19 +11,35 @@ const criarProprietario = async (req, res) => {
   }
 
   try {
-    const senha_hash = await bcrypt.hash(senha, 10);
+    // normalizar o e-mail pra evitar duplicidade com maiúsculas/minúsculas
+    const emailNorm = String(email).trim().toLowerCase();
+
+    // 1) checar em motoristas
+    const [rows] = await pool.query(
+      "SELECT id FROM motoristas WHERE email = ? LIMIT 1",
+      [emailNorm]
+    );
+    if (rows.length) {
+      return res.status(409).json({ error: "E-mail já cadastrado como motorista" });
+    }
+    // 2) hash e insert (já aprovando)
+    const senhaHash = await bcrypt.hash(senha, 10);
 
     const [result] = await pool.query(
       `INSERT INTO proprietarios (nome, email, telefone, cpf_cnpj, senha_hash, status)
-       VALUES (?, ?, ?, ?, ?, 'aprovado')`,
-      [nome, email, telefone, cpf_cnpj, senha_hash]
+        VALUES (?, ?, ?, ?, ?, 'aprovado')`,
+      [nome, emailNorm, telefone || null, cpf_cnpj, senhaHash]
     );
-
     return res.status(201).json({ id: result.insertId });
   } catch (err) {
-    console.error('Erro ao criar proprietário:', err.message);
-    return res.status(500).json({ error: 'Erro ao criar proprietário', detalhes: err.message });
+    if (err?.code === "ER_DUP_ENTRY") {
+      return res.status(409).json({ error: "E-mail ou CPF/CNPJ já cadastrado como proprietário" });
+    }
+    console.error("[proprietarios] erro:", err);
+    return res.status(500).json({ error: "Erro ao criar proprietário" });
   }
+
+
 };
 
 const loginProprietario = async (req, res) => {
