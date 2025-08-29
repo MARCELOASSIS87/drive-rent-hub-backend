@@ -86,8 +86,67 @@ const loginProprietario = async (req, res) => {
     return res.status(500).json({ error: 'Erro no login', detalhes: err.message });
   }
 };
+// KPIs do proprietário: veículos alugados, aluguéis ativos, solicitações pendentes
+async function getOwnerStats(req, res) {
+  try {
+    // tenta pegar do middleware de auth (req.user.id); se não tiver, tenta Bearer token
+    let ownerId = req.user?.id;
+    if (!ownerId) {
+      const auth = req.headers.authorization;
+      const token = auth?.startsWith("Bearer ") ? auth.slice(7) : null;
+      if (token) {
+        try {
+          const decoded = jwt.verify(token, JWT_SECRET);
+          if (decoded?.role === "proprietario") ownerId = decoded.id;
+        } catch (_) { }
+      }
+    }
+    if (!ownerId) return res.status(401).json({ error: "Unauthorized" });
+
+    // 1) Veículos do owner com status 'alugado'
+    const [rowsVeiculosAlugados] = await pool.query(
+      `SELECT COUNT(*) AS total
+       FROM veiculos v
+       WHERE v.proprietario_id = ?
+         AND v.status = 'alugado'`,
+      [ownerId]
+    );
+
+    // 2) Aluguéis ativos (em uso) dos veículos do owner
+    const [rowsAlugueisAtivos] = await pool.query(
+      `SELECT COUNT(a.id) AS total
+       FROM alugueis a
+       JOIN veiculos v ON v.id = a.veiculo_id
+       WHERE v.proprietario_id = ?
+         AND a.status IN ('em_uso')`,
+      [ownerId]
+    );
+
+    // 3) Solicitações pendentes para veículos do owner
+    const [rowsSolicPend] = await pool.query(
+      `SELECT COUNT(s.id) AS total
+       FROM solicitacoes_aluguel s
+       JOIN veiculos v ON v.id = s.veiculo_id
+       WHERE v.proprietario_id = ?
+         AND s.status = 'pendente'`,
+      [ownerId]
+    );
+
+    return res.json({
+      veiculosAlugados: rowsVeiculosAlugados[0]?.total ?? 0,
+      alugueisAtivos: rowsAlugueisAtivos[0]?.total ?? 0,
+      solicitacoesPendentes: rowsSolicPend[0]?.total ?? 0,
+    });
+  } catch (err) {
+    console.error("[proprietariosController.getOwnerStats] error:", err);
+    return res
+      .status(500)
+      .json({ error: "Erro ao calcular estatísticas do proprietário" });
+  }
+}
 
 module.exports = {
   criarProprietario,
   loginProprietario,
+  getOwnerStats,
 };

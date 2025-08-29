@@ -1,0 +1,136 @@
+BACKEND
+├── Dockerfile
+├── __tests__
+│   ├── badges.contador.e2e.test.js
+│   ├── badges.contratos.e2e.test.js
+│   ├── badges.solicitacoes.e2e.test.js
+│   ├── health
+│   │   └── db.pool.test.js
+│   ├── helpers
+│   │   └── resetDb.js
+│   └── http
+│       ├── auth.login.all.test.js
+│       ├── cadastro.motorista.test.js
+│       ├── cadastro.proprietario.test.js
+│       ├── contratos.flow.test.js
+│       ├── veiculos.owner.flow.test.js
+│       └── veiculos.public.test.js
+├── app.js
+├── codex_prompts.txt
+├── commit_master_backend.sh
+├── config
+│   ├── db.js
+│   └── jwt.js
+├── controllers
+│   ├── adminController.js
+│   ├── authController.js
+│   ├── contratosController.js
+│   ├── motoristasController.js
+│   ├── proprietariosController.js
+│   ├── rentalRequestsController.js
+│   └── veiculosController.js
+├── jest.globalTeardown.js
+├── middlewares
+│   ├── adminAuth.js
+│   └── auth.js
+├── package-lock.json
+├── package.json
+├── routes
+│   ├── adminRoutes.js
+│   ├── authRoutes.js
+│   ├── contratosRoutes.js
+│   ├── motoristasRoutes.js
+│   ├── notificacoes.js
+│   ├── proprietariosRoutes.js
+│   ├── rentalRequestsRoutes.js
+│   └── veiculosRoutes.js
+├── server.js
+├── sql
+│   └── schema.prod.sql
+└── utils
+    ├── contractHtml.js
+    └── ownership.js
+
+FRONTEND
+.
+├── Dockerfile
+├── README.md
+├── bun.lockb
+├── commit_master_front.sh
+├── components.json
+├── eslint.config.js
+├── index.html
+├── package-lock.json
+├── package.json
+├── postcss.config.js
+├── public
+│   ├── logo-locpocos.png
+│   ├── placeholder.svg
+│   └── robots.txt
+├── src
+│   ├── App.css
+│   ├── App.tsx
+│   ├── assets
+│   │   ├── banner.png
+│   │   ├── banner1800.png
+│   │   ├── favicon.png
+│   │   └── login-bg.png
+│   ├── components
+│   │   ├── AdminSidebar.tsx
+│   │   ├── CarCard.tsx
+│   │   ├── CarFilters.tsx
+│   │   ├── DriverSidebar.tsx
+│   │   ├── LoginForm.tsx
+│   │   ├── OwnerSidebar.tsx
+│   │   └── RegisterForm.tsx
+│   ├── contexts
+│   │   └── AuthContext.tsx
+│   ├── data
+│   │   └── mockCars.ts
+│   ├── hooks
+│   │   ├── use-mobile.tsx
+│   │   └── use-toast.ts
+│   ├── index.css
+│   ├── layouts
+│   │   ├── AdminLayout.tsx
+│   │   ├── DriverLayout.tsx
+│   │   └── OwnerLayout.tsx
+│   ├── lib
+│   │   └── utils.ts
+│   ├── main.tsx
+│   ├── pages
+│   │   ├── AdminLogin.tsx
+│   │   ├── Index.tsx
+│   │   ├── NotFound.tsx
+│   │   ├── Register.tsx
+│   │   ├── RegisterChoice.tsx
+│   │   ├── RegisterProprietario.tsx
+│   │   ├── admin
+│   │   │   ├── Contratos.tsx
+│   │   │   ├── Dashboard.tsx
+│   │   │   ├── Motoristas.tsx
+│   │   │   ├── Solicitacoes.tsx
+│   │   │   └── Veiculos.tsx
+│   │   ├── driver
+│   │   │   ├── ActiveRentals.tsx
+│   │   │   ├── ContratoDigital.tsx
+│   │   │   ├── Dashboard.tsx
+│   │   │   ├── MyRequests.tsx
+│   │   │   └── RentalRequest.tsx
+│   │   └── owner
+│   │       ├── OwnerContratos.tsx
+│   │       ├── OwnerDashboard.tsx
+│   │       ├── OwnerDocumentos.tsx
+│   │       └── OwnerVeiculos.tsx
+│   ├── services
+│   │   └── api.ts
+│   ├── types
+│   │   ├── backend.ts
+│   │   ├── car.ts
+│   │   └── contrato.ts
+│   └── vite-env.d.ts
+├── tailwind.config.ts
+├── tsconfig.app.json
+├── tsconfig.json
+├── tsconfig.node.json
+└── vite.config.ts
